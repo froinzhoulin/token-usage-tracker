@@ -13,8 +13,8 @@ impl Db {
         Self { conn: Mutex::new(conn), path }
     }
 
-    pub fn lock(&self) -> MutexGuard<'_, Connection> {
-        self.conn.lock().expect("db mutex poisoned")
+    pub fn lock(&self) -> std::sync::LockResult<MutexGuard<'_, Connection>> {
+        self.conn.lock()
     }
 }
 
