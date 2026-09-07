@@ -1,6 +1,6 @@
-mod commands;
-mod db;
-mod domain;
+pub mod commands;
+pub mod db;
+pub mod domain;
 
 use tauri::Manager;
 
@@ -34,6 +34,7 @@ pub fn run() {
             commands::import_::preview_csv,
             commands::import_::import_csv,
             commands::export::export_data,
+            commands::export::write_text_file,
             commands::settings::get_settings,
             commands::settings::set_settings,
             commands::settings::backup_db,

@@ -25,3 +25,9 @@ pub fn export_data(
         _ => de::to_csv(&conn, &q.filter),
     }
 }
+
+/// 把文本内容写入指定路径(前端经 save dialog 选好路径后调用)。
+#[tauri::command]
+pub fn write_text_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, content.as_bytes()).map_err(|e| format!("写入失败: {e}"))
+}
