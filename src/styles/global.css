@@ -1,0 +1,135 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f5f6f8;
+  --bg-panel: #ffffff;
+  --fg: #1f2329;
+  --fg-muted: #6b7280;
+  --border: #e3e6ea;
+  --accent: #2563eb;
+  --ok: #16a34a;
+  --warn: #d97706;
+  --error-bg: #fef2f2;
+  --error-fg: #b91c1c;
+
+  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  line-height: 1.6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181d;
+    --bg-panel: #1e2128;
+    --fg: #e5e7eb;
+    --fg-muted: #9ca3af;
+    --border: #2b2f38;
+    --accent: #60a5fa;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar h1 {
+  font-size: 18px;
+  margin: 0;
+  flex: 1;
+}
+
+.badge {
+  font-size: 12px;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.content {
+  flex: 1;
+  padding: 24px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-content: start;
+}
+
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px;
+}
+
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.panel.muted {
+  opacity: 0.9;
+}
+
+.status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 13px;
+}
+
+.status-row.ok .status-value {
+  color: var(--ok);
+}
+
+.status-row.warn .status-value {
+  color: var(--warn);
+}
+
+.error-box {
+  margin-top: 12px;
+  background: var(--error-bg);
+  color: var(--error-fg);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.loading {
+  color: var(--fg-muted);
+}
+
+ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
