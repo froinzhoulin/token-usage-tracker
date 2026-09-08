@@ -5,11 +5,10 @@ export interface CurrencyContext {
   usdCnyRate: number
 }
 
+/** token 数显示: 完整数字(千位分隔), 不用 K/M 缩写 */
 export function fmtTokens(n: number | null | undefined): string {
   if (n === null || n === undefined) return '-'
-  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
-  if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(n)
+  return n.toLocaleString('en-US')
 }
 
 /** USD → 展示币种 */
