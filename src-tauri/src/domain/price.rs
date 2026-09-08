@@ -174,6 +174,28 @@ pub struct PriceRow {
     pub source: String,
 }
 
+/// 模型别名 → 计价基准模型(厂商更名/客户端旧字段常见)。
+/// 当某上报模型名在价格库中无内置价时, 尝试用别名映射计价。
+pub const MODEL_ALIASES: &[(&str, &str)] = &[
+    // DeepSeek 平台展示名/旧接口名 → 现价目模型
+    ("deepseek-chat", "deepseek-v4-flash"),
+    ("deepseek-reasoner", "deepseek-v4-pro"),
+    ("deepseek-v3", "deepseek-v4-flash"),
+];
+
+/// 按模型名查生效价, 找不到时尝试别名映射再查一次。
+pub fn price_for_model_any(conn: &Connection, model_name: &str) -> Result<Option<PriceRow>> {
+    if let Some(row) = price_for_model(conn, model_name)? {
+        return Ok(Some(row));
+    }
+    for (alias, target) in MODEL_ALIASES {
+        if alias.eq_ignore_ascii_case(model_name.trim()) {
+            return price_for_model(conn, target);
+        }
+    }
+    Ok(None)
+}
+
 /// 按模型名(全库唯一假定, 跨厂商名称冲突少见)查生效价。
 pub fn price_for_model(conn: &Connection, model_name: &str) -> Result<Option<PriceRow>> {
     let mut stmt = conn.prepare(

@@ -18,7 +18,7 @@ export default function CollectPage() {
   const [sending, setSending] = useState(false)
 
   // 手动粘贴表单
-  const [model, setModel] = useState('deepseek-chat')
+  const [model, setModel] = useState('deepseek-v4-flash')
   const [provider, setProvider] = useState('deepseek')
   const [prompt, setPrompt] = useState('')
   const [completion, setCompletion] = useState('')
@@ -34,7 +34,7 @@ export default function CollectPage() {
   const curlExample = status
     ? `curl -X POST ${status.base_url}/api/v1/usage \\
   -H "Content-Type: application/json" \\
-  -d '{"model":"deepseek-chat","provider":"deepseek","prompt_tokens":100,"completion_tokens":50}'`
+  -d '{"model":"deepseek-v4-flash","provider":"deepseek","prompt_tokens":100,"completion_tokens":50}'`
     : ''
 
   async function handleSend() {
@@ -92,7 +92,7 @@ export default function CollectPage() {
 resp = requests.post(  # 你在自己程序里调用模型后
     "http://127.0.0.1:8765/api/v1/usage",
     json={
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-flash",  # 或你实际使用的模型名(deepseek-v4-pro 等)
         "provider": "deepseek",
         "prompt_tokens": 1234,      # resp.usage.prompt_tokens
         "completion_tokens": 567,   # resp.usage.completion_tokens
@@ -102,8 +102,8 @@ resp = requests.post(  # 你在自己程序里调用模型后
 )`}</pre>
         </details>
         <p className="muted" style={{ fontSize: 12 }}>
-          字段说明：model 必填；prompt_tokens/completion_tokens 尽量给；cost_cny 或 cost_usd
-          是官方账单金额（给了就不估算）；request_id 相同会自动去重。
+          字段说明：model 必填（如 deepseek-v4-flash）；prompt_tokens/completion_tokens 尽量给；
+          cost_cny 或 cost_usd 是官方账单金额（给了就不估算）；request_id 相同会自动去重。
         </p>
       </div>
 
@@ -111,7 +111,7 @@ resp = requests.post(  # 你在自己程序里调用模型后
         <h3>手动记一条（快速验证）</h3>
         <div className="form-grid">
           <input
-            placeholder="模型 (必填, 如 deepseek-chat)"
+            placeholder="模型 (必填, 如 deepseek-v4-flash)"
             value={model}
             onChange={(e) => setModel(e.target.value)}
           />

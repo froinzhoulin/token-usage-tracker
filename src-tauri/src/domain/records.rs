@@ -3,7 +3,7 @@
 use rusqlite::{params, Connection, Result, Row};
 use serde::{Deserialize, Serialize};
 
-use super::price::{estimate_cost_usd, price_for_model};
+use super::price::{estimate_cost_usd, price_for_model_any};
 
 /// 前端传入的通用过滤条件(所有 list/stats/export 命令共用)。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -285,7 +285,7 @@ pub fn insert(
         }
         None => {
             if let Some(model) = &rec.model_name {
-                if let Some(price) = price_for_model(conn, model)? {
+                if let Some(price) = price_for_model_any(conn, model)? {
                     let est = estimate_cost_usd(
                         &price,
                         rec.prompt_tokens,
@@ -383,7 +383,7 @@ pub fn update(conn: &Connection, id: i64, patch: &RecordPatch) -> Result<bool> {
     // 费用决定: recompute → 按单价; 否则保留或使用显式 cost_usd
     let (cost_usd, cost_source) = if patch.recompute_cost {
         match &model_name {
-            Some(m) => match price_for_model(conn, m)? {
+            Some(m) => match price_for_model_any(conn, m)? {
                 Some(p) => match estimate_cost_usd(&p, prompt, completion, cached) {
                     Some(v) => (Some(v), Some("computed".to_string())),
                     None => (existing.cost_usd, existing.cost_source.clone()),
@@ -449,7 +449,7 @@ pub fn recompute_missing(conn: &Connection) -> Result<i64> {
             None => continue,
         };
         let Some(model) = &view.model_name else { continue };
-        let Some(price) = price_for_model(conn, model)? else { continue };
+        let Some(price) = price_for_model_any(conn, model)? else { continue };
         let Some(est) = estimate_cost_usd(
             &price,
             view.prompt_tokens,
@@ -525,6 +525,27 @@ mod tests {
         let id = insert(&conn, &rec, None).unwrap().unwrap();
         let row = get(&conn, id).unwrap().unwrap();
         // 0.44 + 1.32 = 1.76 USD (缓存为空)
+        let c = row.cost_usd.unwrap();
+        assert!((c - 1.76).abs() < 1e-6, "got {c}");
+        assert_eq!(row.cost_source.as_deref(), Some("computed"));
+    }
+
+    #[test]
+    fn alias_model_name_gets_priced() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn).unwrap();
+        // deepseek-chat 无内置价, 别名映射到 deepseek-v4-flash 计价
+        let rec = NewRecord {
+            recorded_at: "2026-09-01T00:00:00Z".into(),
+            source: "manual".into(),
+            model_name: Some("deepseek-chat".into()),
+            prompt_tokens: Some(1_000_000),
+            completion_tokens: Some(1_000_000),
+            cost_usd: None,
+            ..Default::default()
+        };
+        let id = insert(&conn, &rec, None).unwrap().unwrap();
+        let row = get(&conn, id).unwrap().unwrap();
         let c = row.cost_usd.unwrap();
         assert!((c - 1.76).abs() < 1e-6, "got {c}");
         assert_eq!(row.cost_source.as_deref(), Some("computed"));
