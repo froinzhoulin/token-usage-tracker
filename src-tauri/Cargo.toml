@@ -20,6 +20,7 @@ rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 dirs = "5"
 csv = "1"
 chrono = { version = "0.4", features = ["serde"] }
+tiny_http = "0.12"
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,3 +1,4 @@
+pub mod collector_status;
 pub mod export;
 pub mod health;
 pub mod import_;

@@ -122,3 +122,78 @@ recorded_at,model,provider,request_id,prompt_tokens,completion_tokens
     assert_eq!(r.skipped_rows, 1);
     assert_eq!(records::count(&conn, &RecordFilter::default()).unwrap(), 2);
 }
+
+/// 验收标准 #1: 10 万行记录导入且看板统计 < 1s。
+/// 手动运行: cargo test --release --test integration perf_100k -- --ignored --nocapture
+#[test]
+#[ignore]
+fn perf_100k_rows() {
+    let (_file, conn) = setup_db();
+
+    // 流式生成 10 万行 CSV
+    let csv_path = _file.path().with_extension("perf.csv");
+    {
+        use std::io::Write;
+        let mut w = std::io::BufWriter::new(std::fs::File::create(&csv_path).unwrap());
+        writeln!(
+            w,
+            "recorded_at,model,provider,request_id,prompt_tokens,completion_tokens,cost_usd"
+        )
+        .unwrap();
+        for i in 0..100_000i64 {
+            let model = if i % 3 == 0 { "deepseek-v4-flash" } else if i % 3 == 1 { "gpt-5.6-sol" } else { "claude-opus-5" };
+            let provider = if i % 3 == 0 { "deepseek" } else if i % 3 == 1 { "openai" } else { "anthropic" };
+            writeln!(
+                w,
+                "2026-0{:02}-{:02} 08:00:00,{model},{provider},perf-req-{i},{},200,,",
+                (i % 9) + 1,
+                (i % 28) + 1,
+                500 + (i % 5000) * 100
+            )
+            .unwrap();
+        }
+    }
+
+    let mut map = HashMap::new();
+    for (src, dst) in [
+        ("recorded_at", "recorded_at"),
+        ("model", "model_name"),
+        ("provider", "provider_code"),
+        ("request_id", "request_id"),
+        ("prompt_tokens", "prompt_tokens"),
+        ("completion_tokens", "completion_tokens"),
+    ] {
+        map.insert(src.to_string(), dst.to_string());
+    }
+
+    let t0 = std::time::Instant::now();
+    let r = import_csv(
+        &conn,
+        csv_path.to_str().unwrap(),
+        &ColumnMapping { map, batch_source: None },
+        "perf.csv",
+    )
+    .expect("import 100k");
+    let import_ms = t0.elapsed().as_millis();
+    assert_eq!(r.ok_rows, 100_000, "all imported, errs: {:?}", r.errors.first());
+
+    let t1 = std::time::Instant::now();
+    let o = stats::overview(&conn, &RecordFilter::default()).unwrap();
+    let overview_ms = t1.elapsed().as_millis();
+    assert_eq!(o.record_count, 100_000);
+
+    let t2 = std::time::Instant::now();
+    let trend = stats::trend(&conn, &RecordFilter::default()).unwrap();
+    let trend_ms = t2.elapsed().as_millis();
+    assert!(trend.len() >= 28);
+
+    // 看板核心查询合计应远低于 1s(release 模式断言 <1000ms)
+    let total_ms = overview_ms + trend_ms;
+    println!(
+        "perf: import={import_ms}ms overview={overview_ms}ms trend={trend_ms}ms total-dashboard={total_ms}ms"
+    );
+    assert!(
+        total_ms < 1000,
+        "dashboard queries too slow: {total_ms}ms"
+    );
+}

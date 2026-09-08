@@ -112,6 +112,15 @@ pub const BUILTIN: &[BuiltinPrice] = &[
         output_per_mtok: 5.0,
         cached_input_per_mtok: Some(0.1),
     },
+    // ---------------- Kimi(月之暗面) ----------------
+    BuiltinPrice {
+        provider_code: "kimi",
+        provider_name: "Kimi(月之暗面)",
+        model_name: "kimi-k3",
+        input_per_mtok: 3.0,
+        output_per_mtok: 15.0,
+        cached_input_per_mtok: None,
+    },
 ];
 
 /// 幂等写入内置价格。仅当某 provider 不存在时插入该 provider 的全部模型,

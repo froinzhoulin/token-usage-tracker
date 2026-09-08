@@ -2,16 +2,16 @@ import { useEffect, useState } from 'react'
 import { getHealth, inTauri, type HealthInfo } from './api/client'
 import Dashboard from './pages/Dashboard'
 import Records from './pages/Records'
-import ImportPage from './pages/ImportPage'
+import CollectPage from './pages/CollectPage'
 import SettingsPage from './pages/Settings'
 import './styles/global.css'
 
-type Tab = 'dashboard' | 'records' | 'import' | 'settings'
+type Tab = 'dashboard' | 'records' | 'collect' | 'settings'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'dashboard', label: '看板' },
   { key: 'records', label: '明细' },
-  { key: 'import', label: '导入' },
+  { key: 'collect', label: '上报' },
   { key: 'settings', label: '设置' },
 ]
 
@@ -50,7 +50,7 @@ export default function App() {
       <main className="content">
         {tab === 'dashboard' && <Dashboard />}
         {tab === 'records' && <Records />}
-        {tab === 'import' && <ImportPage />}
+        {tab === 'collect' && <CollectPage />}
         {tab === 'settings' && <SettingsPage />}
       </main>
 

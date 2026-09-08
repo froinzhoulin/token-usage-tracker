@@ -189,6 +189,21 @@ export const getHealth = (): Promise<HealthInfo> =>
     message: 'Browser preview: Tauri backend not connected',
   }))
 
+export interface CollectorStatusInfo {
+  port: number
+  started: boolean
+  error: string | null
+  base_url: string
+}
+
+export const collectorStatus = (): Promise<CollectorStatusInfo> =>
+  call('collector_status', {}, () => ({
+    port: 8765,
+    started: false,
+    error: null,
+    base_url: 'http://127.0.0.1:8765',
+  }))
+
 export const listRecords = (
   filter: RecordFilter,
   page: number,

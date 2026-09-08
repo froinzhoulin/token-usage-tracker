@@ -478,3 +478,35 @@ select:focus {
 .price-table {
   width: 100%;
 }
+
+/* ---- 上报页 ---- */
+.highlight-panel {
+  border-left: 4px solid var(--accent);
+}
+.ok-badge {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.endpoint-box {
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 10px 0;
+  font-size: 14px;
+}
+.endpoint-box code {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.code-block {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 0;
+}

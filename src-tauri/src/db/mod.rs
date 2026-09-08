@@ -1,22 +1,28 @@
 use rusqlite::Connection;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::domain::price;
 
 /// 应用持有的 SQLite 连接（单写者多读者由调用方保证）。
+/// 内部 Arc 包装, 供 collector 后台线程共享同一连接。
 pub struct Db {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
     pub path: PathBuf,
 }
 
 impl Db {
     pub fn new(conn: Connection, path: PathBuf) -> Self {
-        Self { conn: Mutex::new(conn), path }
+        Self { conn: Arc::new(Mutex::new(conn)), path }
     }
 
     pub fn lock(&self) -> std::sync::LockResult<MutexGuard<'_, Connection>> {
         self.conn.lock()
+    }
+
+    /// 返回共享连接句柄(供后台线程使用)。
+    pub fn shared(&self) -> Arc<Mutex<Connection>> {
+        Arc::clone(&self.conn)
     }
 }
 
@@ -152,9 +158,10 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<u32> {
 
 /// 首次启动写入默认设置(幂等)。
 fn seed_settings(conn: &Connection) -> rusqlite::Result<()> {
-    let defaults: [(&str, &str); 2] = [
+    let defaults: [(&str, &str); 3] = [
         ("display_currency", "CNY"),
         ("usd_cny_rate", "7.1"),
+        ("collector_port", "8765"),
     ];
     for (k, v) in defaults {
         conn.execute(

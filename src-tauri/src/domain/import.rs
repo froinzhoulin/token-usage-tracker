@@ -89,7 +89,6 @@ pub fn import_csv(
 
     let tx = conn.unchecked_transaction().map_err(|e| format!("事务启动失败: {e}"))?;
 
-    let mut batch_id: Option<i64> = None;
     // 先建批次(即使空也建, 便于定位)
     tx.execute(
         "INSERT INTO import_batch(file_name, total_rows, ok_rows, failed_rows, mapping_json)
@@ -100,7 +99,7 @@ pub fn import_csv(
         ],
     )
     .map_err(|e| format!("批次写入失败: {e}"))?;
-    batch_id = Some(tx.last_insert_rowid());
+    let batch_id = Some(tx.last_insert_rowid());
 
     for (line_no, record) in rdr.records().enumerate() {
         let csv_row = record.map_err(|e| format!("第 {} 行解析错误: {e}", line_no + 2))?;
