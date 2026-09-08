@@ -43,7 +43,11 @@ interface ViewData {
 
 export default function Dashboard() {
   const [vd, setVd] = useState<ViewData | null>(null)
-  const [settings, setSettings] = useState<SettingsView>({ display_currency: 'CNY', usd_cny_rate: 7.1 })
+  const [settings, setSettings] = useState<SettingsView>({
+    display_currency: 'CNY',
+    usd_cny_rate: 7.1,
+    collector_upstream: 'https://api.deepseek.com',
+  })
   const [range, setRange] = useState('today')
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)

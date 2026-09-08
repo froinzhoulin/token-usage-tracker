@@ -9,11 +9,18 @@ use crate::db::Db;
 pub struct SettingsView {
     pub display_currency: String,
     pub usd_cny_rate: f64,
+    /// 透明代理上游地址(如 https://api.deepseek.com)
+    pub collector_upstream: String,
 }
 
 #[tauri::command]
 pub fn get_settings(db: State<'_, Db>) -> Result<SettingsView, String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
+    let upstream = read_setting(&conn, "collector_upstream")
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://api.deepseek.com".to_string());
     read_setting(&conn, "display_currency")
         .map(|c| SettingsView {
             display_currency: c.unwrap_or_else(|| "CNY".into()),
@@ -22,6 +29,7 @@ pub fn get_settings(db: State<'_, Db>) -> Result<SettingsView, String> {
                 .flatten()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(7.1),
+            collector_upstream: upstream,
         })
         .map_err(|e| e.to_string())
 }
@@ -31,6 +39,13 @@ pub fn set_settings(db: State<'_, Db>, s: SettingsView) -> Result<(), String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
     write_setting(&conn, "display_currency", &s.display_currency).map_err(|e| e.to_string())?;
     write_setting(&conn, "usd_cny_rate", &s.usd_cny_rate.to_string()).map_err(|e| e.to_string())?;
+    let upstream = s.collector_upstream.trim().to_string();
+    if upstream.is_empty() {
+        write_setting(&conn, "collector_upstream", "https://api.deepseek.com")
+            .map_err(|e| e.to_string())?;
+    } else {
+        write_setting(&conn, "collector_upstream", &upstream).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

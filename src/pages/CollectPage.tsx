@@ -1,5 +1,5 @@
-// 采集端点接入说明页(v0.2 主入口):
-// 展示本机上报 URL、curl/Python 示例, 并可手动粘贴一条记录快速验证。
+// 接入页(v0.4): 主推"本地透明代理"自动检测 ——
+// 把程序/客户端的 API 地址指向本机即可, 工具自动转发+自动记用量。
 
 import { useEffect, useState } from 'react'
 
@@ -17,7 +17,7 @@ export default function CollectPage() {
   const [msg, setMsg] = useState('')
   const [sending, setSending] = useState(false)
 
-  // 手动粘贴表单
+  // 手动上报表单(备用)
   const [model, setModel] = useState('deepseek-v4-flash')
   const [provider, setProvider] = useState('deepseek')
   const [prompt, setPrompt] = useState('')
@@ -31,11 +31,7 @@ export default function CollectPage() {
       .catch(() => {})
   }, [])
 
-  const curlExample = status
-    ? `curl -X POST ${status.base_url}/api/v1/usage \\
-  -H "Content-Type: application/json" \\
-  -d '{"model":"deepseek-v4-flash","provider":"deepseek","prompt_tokens":100,"completion_tokens":50}'`
-    : ''
+  const proxyUrl = status ? `${status.base_url}` : 'http://127.0.0.1:8765'
 
   async function handleSend() {
     setSending(true)
@@ -64,51 +60,68 @@ export default function CollectPage() {
   return (
     <div className="page">
       <div className="page-header">
-        <h2>用量上报</h2>
+        <h2>自动检测接入</h2>
         <span className={`badge ${status?.started ? 'ok-badge' : ''}`}>
           {status?.started
-            ? `收集服务运行中 · ${status.base_url}`
-            : `收集服务未启动 ${status?.error ? `(${status.error})` : ''}`}
+            ? `服务运行中 · ${status.base_url}`
+            : `服务未启动 ${status?.error ? `(${status.error})` : ''}`}
         </span>
       </div>
 
       <div className="panel highlight-panel">
-        <h3>接入方式（推荐，自动记录）</h3>
+        <h3>⭐ 推荐：透明代理（代码零改动，全自动）</h3>
         <p>
-          在本机程序调用大模型返回后，把用量 POST 到下面的地址即可，应用会自动入库并在看板累计。
-          <strong>只需要能区分模型名和 token 数，响应里的 usage 字段就能直接填。</strong>
+          在你调用 DeepSeek 的程序/客户端里，把 API 地址（base_url）改成下面这个地址，
+          <strong>模型名和 Key 保持不变</strong>。之后的每一次调用都会自动识别模型、自动记录用量：
         </p>
         <div className="endpoint-box">
-          <code>
-            {status?.base_url || 'http://127.0.0.1:8765'}
-            /api/v1/usage
-          </code>
+          <code>{proxyUrl}</code>
         </div>
-        <h4 style={{ margin: '14px 0 6px' }}>curl 示例</h4>
-        <pre className="code-block">{curlExample || '等待收集服务…'}</pre>
-        <details style={{ marginTop: 8 }}>
-          <summary>看 Python 示例</summary>
-          <pre className="code-block">{`import requests
-resp = requests.post(  # 你在自己程序里调用模型后
-    "http://127.0.0.1:8765/api/v1/usage",
-    json={
-        "model": "deepseek-v4-flash",  # 或你实际使用的模型名(deepseek-v4-pro 等)
-        "provider": "deepseek",
-        "prompt_tokens": 1234,      # resp.usage.prompt_tokens
-        "completion_tokens": 567,   # resp.usage.completion_tokens
-        "session_id": "s-001",      # 可选
-        "request_id": "r-001",      # 可选, 防重复
-    },
-)`}</pre>
-        </details>
-        <p className="muted" style={{ fontSize: 12 }}>
-          字段说明：model 必填（如 deepseek-v4-flash）；prompt_tokens/completion_tokens 尽量给；
-          cost_cny 或 cost_usd 是官方账单金额（给了就不估算）；request_id 相同会自动去重。
+        <table className="mini-table proxy-compare">
+          <tbody>
+            <tr>
+              <td>改之前</td>
+              <td>
+                <code>base_url = https://api.deepseek.com</code>
+              </td>
+            </tr>
+            <tr>
+              <td>改之后</td>
+              <td>
+                <code>base_url = {proxyUrl}</code>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p className="muted" style={{ marginTop: 8 }}>
+          原理：工具在本机监听 OpenAI 兼容接口，把 /chat/completions 请求转发给真实 DeepSeek
+          服务（默认上游，可在设置修改），同时自动解析响应里的 usage 入库。你的 API Key
+          只是路过转发，<strong>不会被读取或保存</strong>。
         </p>
+        <h4 style={{ margin: '14px 0 6px' }}>Python 示例（改一行即可）</h4>
+        <pre className="code-block">{`from openai import OpenAI
+
+client = OpenAI(
+    api_key="sk-你的key",          # 保持不变
+    base_url="${proxyUrl}",   # ← 只改这一行
+)
+
+resp = client.chat.completions.create(
+    model="deepseek-v4-flash",     # 你的模型名, 保持不变
+    messages=[{"role": "user", "content": "你好"}],
+)
+print(resp.choices[0].message.content)`}</pre>
+        <details style={{ marginTop: 10 }}>
+          <summary>curl 直接验证代理（会自动记录）</summary>
+          <pre className="code-block">{`curl ${proxyUrl}/v1/chat/completions \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer sk-你的key" \\
+  -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}],"stream":false}'`}</pre>
+        </details>
       </div>
 
       <div className="panel">
-        <h3>手动记一条（快速验证）</h3>
+        <h3>手动记一条（备用 / 验证用）</h3>
         <div className="form-grid">
           <input
             placeholder="模型 (必填, 如 deepseek-v4-flash)"

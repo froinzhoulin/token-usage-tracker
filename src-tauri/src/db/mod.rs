@@ -158,10 +158,11 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<u32> {
 
 /// 首次启动写入默认设置(幂等)。
 fn seed_settings(conn: &Connection) -> rusqlite::Result<()> {
-    let defaults: [(&str, &str); 3] = [
+    let defaults: [(&str, &str); 4] = [
         ("display_currency", "CNY"),
         ("usd_cny_rate", "7.1"),
         ("collector_port", "8765"),
+        ("collector_upstream", "https://api.deepseek.com"),
     ];
     for (k, v) in defaults {
         conn.execute(

@@ -35,7 +35,11 @@ export default function Records() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [filter, setFilter] = useState<RecordFilter>(emptyFilter())
-  const [settings, setSettings] = useState<SettingsView>({ display_currency: 'CNY', usd_cny_rate: 7.1 })
+  const [settings, setSettings] = useState<SettingsView>({
+    display_currency: 'CNY',
+    usd_cny_rate: 7.1,
+    collector_upstream: 'https://api.deepseek.com',
+  })
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<number | null>(null)

@@ -143,6 +143,7 @@ export interface ModelPrice {
 export interface SettingsView {
   display_currency: string
   usd_cny_rate: number
+  collector_upstream: string
 }
 
 export interface CsvPreview {
@@ -269,7 +270,11 @@ export const upsertCustomPrice = (p: {
 }): Promise<number> => call('upsert_custom_price', { p }, () => 1)
 
 export const getSettings = (): Promise<SettingsView> =>
-  call('get_settings', {}, () => ({ display_currency: 'CNY', usd_cny_rate: 7.1 }))
+  call('get_settings', {}, () => ({
+    display_currency: 'CNY',
+    usd_cny_rate: 7.1,
+    collector_upstream: 'https://api.deepseek.com',
+  }))
 
 export const setSettings = (s: SettingsView): Promise<void> =>
   call('set_settings', { s }, () => undefined)

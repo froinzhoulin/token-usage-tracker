@@ -76,9 +76,17 @@ pub fn start(
     std::thread::Builder::new()
         .name("usage-collector".into())
         .spawn(move || {
+            // 代理转发可能长时间阻塞, 每个请求独立线程处理
             while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-                match server.recv_timeout(std::time::Duration::from_millis(500)) {
-                    Ok(Some(request)) => handle_request(&conn, request),
+                match server.recv_timeout(std::time::Duration::from_millis(200)) {
+                    Ok(Some(request)) => {
+                        let conn = Arc::clone(&conn);
+                        std::thread::Builder::new()
+                            .name("collector-req".into())
+                            .spawn(move || handle_request(&conn, request))
+                            .map_err(|e| eprintln!("[collector] spawn failed: {e}"))
+                            .ok();
+                    }
                     Ok(None) => continue,
                     Err(_) => continue,
                 }
@@ -92,7 +100,94 @@ pub fn start(
 fn handle_request(conn: &Arc<Mutex<Connection>>, mut request: tiny_http::Request) {
     let method = request.method().clone();
     let url = request.url().to_string();
-    let result = route(conn, &mut request, &method, &url);
+    let path = url.split('?').next().unwrap_or(&url).to_string();
+
+    // ---- 透明代理路径: 转发到真实上游, 自动解析 usage 入库 ----
+    if crate::proxy::is_proxy_path(method.as_str(), &path) {
+        // 读取请求体(上限 8MB)
+        let mut body = Vec::new();
+        if let Err(e) = request
+            .as_reader()
+            .take(8 * 1024 * 1024)
+            .read_to_end(&mut body)
+        {
+            let resp = tiny_http::Response::from_string(format!(
+                "{{\"error\":\"读取请求体失败: {e}\"}}"
+            ))
+            .with_status_code(400);
+            let _ = request.respond(resp);
+            return;
+        }
+        // 判断是否流式请求(简单看 body 中 stream 字段)
+        let is_stream = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("stream").and_then(|s| s.as_bool()))
+            .unwrap_or(false);
+
+        let headers = request
+            .headers()
+            .iter()
+            .map(|h| (h.field.to_string(), h.value.to_string()))
+            .collect::<Vec<_>>();
+
+        if is_stream {
+            // 流式: 由 proxy 自行开线程转发并返回 pipe reader
+            match crate::proxy::handle_proxy_streaming(
+                Arc::clone(conn),
+                &path,
+                &headers,
+                &body,
+            ) {
+                Ok((status, hdrs, reader)) => {
+                    let mut resp =
+                        tiny_http::Response::empty(status).with_data(reader, None);
+                    for (k, v) in hdrs {
+                        if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
+                            resp = resp.with_header(h);
+                        }
+                    }
+                    let _ = request.respond(resp);
+                }
+                Err(e) => {
+                    let resp = tiny_http::Response::from_string(format!(
+                        "{{\"error\":\"代理转发失败: {e}\"}}"
+                    ))
+                    .with_status_code(502)
+                    .with_header(
+                        tiny_http::Header::from_bytes(&b"content-type"[..], &b"application/json"[..])
+                            .expect("h"),
+                    );
+                    let _ = request.respond(resp);
+                }
+            }
+        } else {
+            match crate::proxy::handle_proxy(conn, method.as_str(), &path, &headers, &body) {
+                Ok((status, hdrs, bytes)) => {
+                    let mut resp = tiny_http::Response::from_data(bytes).with_status_code(status);
+                    for (k, v) in hdrs {
+                        if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
+                            resp = resp.with_header(h);
+                        }
+                    }
+                    let _ = request.respond(resp);
+                }
+                Err(e) => {
+                    let resp = tiny_http::Response::from_string(format!(
+                        "{{\"error\":\"代理转发失败: {e}\"}}"
+                    ))
+                    .with_status_code(502)
+                    .with_header(
+                        tiny_http::Header::from_bytes(&b"content-type"[..], &b"application/json"[..])
+                            .expect("h"),
+                    );
+                    let _ = request.respond(resp);
+                }
+            }
+        }
+        return;
+    }
+
+    let result = route(conn, &mut request, &method, &path);
     let (status, body) = match result {
         Ok((code, body)) => (code, body),
         Err(e) => (400, format!("{{\"ok\":false,\"error\":{}}}", serde_json::to_string(&e).unwrap_or_else(|_| "\"err\"".into()))),

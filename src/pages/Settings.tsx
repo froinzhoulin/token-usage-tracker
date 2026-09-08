@@ -20,6 +20,7 @@ export default function SettingsPage() {
   const [settings, setSettingsState] = useState<SettingsView>({
     display_currency: 'CNY',
     usd_cny_rate: 7.1,
+    collector_upstream: 'https://api.deepseek.com',
   })
   const [prices, setPrices] = useState<ModelPrice[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -150,6 +151,26 @@ export default function SettingsPage() {
 
       {error && <div className="error-box">{error}</div>}
       {okMsg && <div className="ok-box">{okMsg}</div>}
+
+      <div className="panel">
+        <h3>透明代理上游（自动检测转发目标）</h3>
+        <div className="row">
+          <input
+            className="wide-input"
+            value={settings.collector_upstream}
+            onChange={(e) => setSettingsState({ ...settings, collector_upstream: e.target.value })}
+            placeholder="https://api.deepseek.com"
+          />
+          <button className="btn primary" onClick={saveSettings}>
+            保存设置
+          </button>
+        </div>
+        <p className="muted" style={{ marginTop: 6 }}>
+          代理会把「上报」页所示地址收到的 /chat/completions 请求转发到这里。支持任何
+          OpenAI 兼容服务（DeepSeek 默认；换 Kimi/智谱/通义等把地址填成对应官方 API 即可，
+          模型名用服务商要求的）。改动后重启应用生效。
+        </p>
+      </div>
 
       <div className="panel">
         <h3>展示币种</h3>

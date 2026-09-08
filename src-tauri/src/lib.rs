@@ -2,6 +2,7 @@ pub mod collector;
 pub mod commands;
 pub mod db;
 pub mod domain;
+pub mod proxy;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

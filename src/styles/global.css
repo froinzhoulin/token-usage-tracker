@@ -676,3 +676,7 @@ tr.fresh td:first-child::before {
 .recent-tokens {
   font-variant-numeric: tabular-nums;
 }
+.wide-input {
+  min-width: 320px;
+  flex: 1;
+}
