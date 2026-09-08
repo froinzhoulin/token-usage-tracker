@@ -123,6 +123,83 @@ recorded_at,model,provider,request_id,prompt_tokens,completion_tokens
     assert_eq!(records::count(&conn, &RecordFilter::default()).unwrap(), 2);
 }
 
+#[test]
+fn time_normalization_and_local_day_filter() {
+    use token_usage_tracker_lib::domain::records::{self, NewRecord, RecordFilter};
+    let (_file, conn) = setup_db();
+
+    let insert = |recorded_at: &str, model: &str| {
+        let rec = NewRecord {
+            recorded_at: recorded_at.into(),
+            source: "manual".into(),
+            model_name: Some(model.into()),
+            prompt_tokens: Some(1),
+            completion_tokens: Some(1),
+            ..Default::default()
+        };
+        records::insert(&conn, &rec, None).unwrap();
+    };
+
+    // 入库格式应统一为规范 ISO UTC(固定宽度, 字符串比较=时间比较)
+    insert("2026-09-01 08:00:00", "m-a"); // 空格格式 → 规范化
+    insert("2026-09-01T08:00:00Z", "m-b"); // 带 T/Z → 规范化
+    insert("2026-09-08 12:34:56", "m-c"); // 今天(未来某日)
+
+    let stored: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT recorded_at FROM usage_record ORDER BY id")
+            .unwrap();
+        let v = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        v
+    };
+    for s in &stored {
+        assert!(s.contains('T') && s.ends_with('Z'), "规范化失败: {s}");
+    }
+    assert_eq!(stored[0], "2026-09-01T08:00:00.000Z");
+    assert_eq!(stored[1], "2026-09-01T08:00:00.000Z");
+
+    // normalize 直接单测
+    assert_eq!(
+        records::normalize_recorded_at("2026-09-01 08:00:00"),
+        "2026-09-01T08:00:00.000Z"
+    );
+    assert_eq!(
+        records::normalize_recorded_at("2026-09-01T08:00:00Z"),
+        "2026-09-01T08:00:00.000Z"
+    );
+    assert_eq!(
+        records::normalize_recorded_at("2026-09-01"),
+        "2026-09-01T00:00:00.000Z"
+    );
+
+    // 过滤: from/to 是本地时区日期串, 后端换算为 UTC 边界。
+    // 08:00 UTC 在任何常见时区(UTC-12~+14)都落在本地 09-01, 故本地日 09-01 恰好两条。
+    let f = RecordFilter {
+        from: Some("2026-09-01".into()),
+        to: Some("2026-09-01".into()),
+        ..Default::default()
+    };
+    assert_eq!(records::count(&conn, &f).unwrap(), 2, "day 09-01 count");
+
+    let f2 = RecordFilter {
+        from: Some("2026-09-08".into()),
+        to: Some("2026-09-08".into()),
+        ..Default::default()
+    };
+    assert_eq!(records::count(&conn, &f2).unwrap(), 1, "day 09-08 count");
+
+    let f3 = RecordFilter {
+        from: Some("2026-09-02".into()),
+        to: Some("2026-09-07".into()),
+        ..Default::default()
+    };
+    assert_eq!(records::count(&conn, &f3).unwrap(), 0, "no records in range");
+}
+
 /// 验收标准 #1: 10 万行记录导入且看板统计 < 1s。
 /// 手动运行: cargo test --release --test integration perf_100k -- --ignored --nocapture
 #[test]

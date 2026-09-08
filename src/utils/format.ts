@@ -50,3 +50,27 @@ export function fmtDay(iso: string): string {
   const pad = (x: number) => String(x).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
+
+/** 本地时区日期串 YYYY-MM-DD(供后端按本地日过滤, 后端转 UTC) */
+export function localDateStr(d: Date): string {
+  const pad = (x: number) => String(x).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+/** 今天(本地)往前 n 天的日期串 */
+export function daysAgoLocal(n: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() - n)
+  return localDateStr(d)
+}
+
+/** 今天(本地)日期串 */
+export function todayLocal(): string {
+  return localDateStr(new Date())
+}
+
+/** 本地 HH:MM:SS */
+export function fmtClock(d: Date): string {
+  const pad = (x: number) => String(x).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}

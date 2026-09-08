@@ -72,6 +72,31 @@ pub fn total_or(prompt: Option<i64>, completion: Option<i64>) -> Option<i64> {
     }
 }
 
+/// 将任意常见格式的时间统一为固定宽度 UTC ISO8601:
+/// `2026-09-08T02:50:09.000Z` (毫秒 3 位 + Z)。
+/// 这样字符串比较 == 时间比较; 兼容 'YYYY-MM-DD HH:MM:SS'(视为UTC) / 带T / 带Z / 小数位数不一。
+pub fn normalize_recorded_at(input: &str) -> String {
+    use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+    let s = input.trim();
+    // 尝试完整 ISO(带时区)
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return dt.with_timezone(&Utc).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    }
+    // 'YYYY-MM-DD HH:MM:SS' / 'YYYY-MM-DDTHH:MM:SS' → 视为 UTC
+    let compact = s.replace('T', " ");
+    let compact = compact.split('.').next().unwrap_or(&compact).trim();
+    if let Ok(ndt) = NaiveDateTime::parse_from_str(compact, "%Y-%m-%d %H:%M:%S") {
+        return Utc.from_utc_datetime(&ndt).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    }
+    // 'YYYY-MM-DD' → 当天 00:00
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        let ndt = d.and_hms_opt(0, 0, 0).unwrap();
+        return Utc.from_utc_datetime(&ndt).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    }
+    // 无法解析: 原样返回(极少见, 避免吞数据)
+    s.to_string()
+}
+
 fn row_to_view(r: &Row) -> rusqlite::Result<UsageRecordView> {
     Ok(UsageRecordView {
         id: r.get(0)?,
@@ -93,17 +118,49 @@ fn row_to_view(r: &Row) -> rusqlite::Result<UsageRecordView> {
     })
 }
 
+/// 将本地时区日期 "2026-09-08"(当天 00:00) 转为等价 UTC 毫秒格式,
+/// 与 normalize_recorded_at 输出格式一致, 保证字符串比较=时间比较。
+fn local_day_start_utc(date: &str) -> String {
+    use chrono::{Local, NaiveDate, TimeZone};
+    let start = match NaiveDate::parse_from_str(date.trim(), "%Y-%m-%d") {
+        Ok(d) => Local.from_local_datetime(&d.and_hms_opt(0, 0, 0).unwrap()),
+        Err(_) => return date.to_string(),
+    };
+    match start.single() {
+        Some(dt) => dt
+            .with_timezone(&chrono::Utc)
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        None => date.to_string(),
+    }
+}
+
+/// to 语义为开区间: 返回 to 次日 00:00(本地时区)对应的 UTC 时刻。
+fn local_day_end_exclusive_utc(date: &str) -> String {
+    use chrono::{Duration, Local, NaiveDate, TimeZone};
+    let next = match NaiveDate::parse_from_str(date.trim(), "%Y-%m-%d") {
+        Ok(d) => d + Duration::days(1),
+        Err(_) => return date.to_string(),
+    };
+    let start = Local.from_local_datetime(&next.and_hms_opt(0, 0, 0).unwrap());
+    match start.single() {
+        Some(dt) => dt
+            .with_timezone(&chrono::Utc)
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        None => date.to_string(),
+    }
+}
+
 /// 把过滤条件编译为 SQL WHERE 片段与参数(统一复用)。
 pub fn filter_sql(f: &RecordFilter) -> (String, Vec<Box<dyn rusqlite::types::ToSql>>) {
     let mut conds: Vec<String> = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     if let Some(v) = &f.from {
         conds.push("recorded_at >= ?".to_string());
-        params.push(Box::new(format!("{v}T00:00:00Z")));
+        params.push(Box::new(local_day_start_utc(v)));
     }
     if let Some(v) = &f.to {
-        conds.push("recorded_at <= ?".to_string());
-        params.push(Box::new(format!("{v}T23:59:59Z")));
+        conds.push("recorded_at < ?".to_string());
+        params.push(Box::new(local_day_end_exclusive_utc(v)));
     }
     if let Some(v) = &f.provider_code {
         conds.push("provider_code = ?".to_string());
@@ -218,6 +275,7 @@ pub fn insert(
     }
 
     let total = total_or(rec.prompt_tokens, rec.completion_tokens);
+    let recorded_at = normalize_recorded_at(&rec.recorded_at);
 
     // 费用: 记录自带优先; 否则按模型单价换算
     let (cost_usd, cost_source) = match rec.cost_usd {
@@ -259,7 +317,7 @@ pub fn insert(
              cost_usd, cost_currency, cost_source, project, tags, note)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'USD',?13,?14,?15,?16)",
         params![
-            rec.recorded_at,
+            recorded_at,
             rec.source,
             batch_id,
             rec.provider_code,
@@ -303,7 +361,7 @@ pub fn update(conn: &Connection, id: i64, patch: &RecordPatch) -> Result<bool> {
         Some(v) => v,
         None => return Ok(false),
     };
-    let recorded_at = patch.recorded_at.clone().unwrap_or(existing.recorded_at);
+    let recorded_at = normalize_recorded_at(&patch.recorded_at.clone().unwrap_or(existing.recorded_at));
     let provider_code = patch
         .provider_code
         .clone()

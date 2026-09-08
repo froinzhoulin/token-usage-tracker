@@ -30,7 +30,7 @@ pub fn overview(conn: &Connection, f: &RecordFilter) -> Result<Overview> {
                 COALESCE(SUM(cached_tokens),0),
                 COALESCE(SUM(prompt_tokens),0) + COALESCE(SUM(completion_tokens),0),
                 SUM(cost_usd),
-                COUNT(DISTINCT substr(recorded_at,1,10)),
+                COUNT(DISTINCT date(recorded_at, 'localtime')),
                 COUNT(DISTINCT model_name),
                 COUNT(DISTINCT provider_code)
          FROM usage_record {where_sql}"
@@ -69,7 +69,7 @@ pub struct TrendPoint {
 pub fn trend(conn: &Connection, f: &RecordFilter) -> Result<Vec<TrendPoint>> {
     let (where_sql, params) = filter_sql(f);
     let sql = format!(
-        "SELECT substr(recorded_at,1,10) AS day,
+        "SELECT date(recorded_at, 'localtime') AS day,
                 COALESCE(SUM(prompt_tokens),0),
                 COALESCE(SUM(completion_tokens),0),
                 COALESCE(SUM(cached_tokens),0),
