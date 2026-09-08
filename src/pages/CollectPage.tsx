@@ -69,37 +69,56 @@ export default function CollectPage() {
       </div>
 
       <div className="panel highlight-panel">
-        <h3>⭐ 推荐：透明代理（代码零改动，全自动）</h3>
+        <h3>⭐ 全自动：检测本机 DSH（DeepSeek Harness）用量</h3>
         <p>
-          在你调用 DeepSeek 的程序/客户端里，把 API 地址（base_url）改成下面这个地址，
-          <strong>模型名和 Key 保持不变</strong>。之后的每一次调用都会自动识别模型、自动记录用量：
+          工具已在自动检测这台机器上 <strong>DeepSeek Harness</strong> 的每一次模型调用
+          （读取 <code>~/.dsh</code> 会话用量快照，每 3 秒刷新）。你在 DSH 里正常对话即可，
+          <strong>无需任何配置或代码改动</strong>——模型、token、会话自动识别并计入看板。
         </p>
         <div className="endpoint-box">
-          <code>{proxyUrl}</code>
+          <code>自动检测运行中 · 数据来源 ~/.dsh/storages/session_projcache</code>
         </div>
-        <table className="mini-table proxy-compare">
-          <tbody>
-            <tr>
-              <td>改之前</td>
-              <td>
-                <code>base_url = https://api.deepseek.com</code>
-              </td>
-            </tr>
-            <tr>
-              <td>改之后</td>
-              <td>
-                <code>base_url = {proxyUrl}</code>
-              </td>
-            </tr>
-          </tbody>
-        </table>
         <p className="muted" style={{ marginTop: 8 }}>
-          原理：工具在本机监听 OpenAI 兼容接口，把 /chat/completions 请求转发给真实 DeepSeek
-          服务（默认上游，可在设置修改），同时自动解析响应里的 usage 入库。你的 API Key
-          只是路过转发，<strong>不会被读取或保存</strong>。
+          每次 DSH 调用（如 deepseek-v4-flash）都会自动记一条：模型名、输入/输出/缓存 token、
+          会话、估算费用。若本机还运行着其它国产模型客户端，可改用下方「透明代理」方式接入。
         </p>
-        <h4 style={{ margin: '14px 0 6px' }}>Python 示例（改一行即可）</h4>
-        <pre className="code-block">{`from openai import OpenAI
+      </div>
+
+      <details className="panel">
+        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
+          透明代理（可选：检测非 DSH 的本机程序，需把 base_url 指向本机）
+        </summary>
+        <div style={{ marginTop: 10 }}>
+          <p>
+            在你调用 DeepSeek 的程序/客户端里，把 API 地址（base_url）改成下面这个地址，
+            <strong>模型名和 Key 保持不变</strong>。之后的每一次调用都会自动识别模型、自动记录用量：
+          </p>
+          <div className="endpoint-box">
+            <code>{proxyUrl}</code>
+          </div>
+          <table className="mini-table proxy-compare">
+            <tbody>
+              <tr>
+                <td>改之前</td>
+                <td>
+                  <code>base_url = https://api.deepseek.com</code>
+                </td>
+              </tr>
+              <tr>
+                <td>改之后</td>
+                <td>
+                  <code>base_url = {proxyUrl}</code>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="muted" style={{ marginTop: 8 }}>
+            原理：工具在本机监听 OpenAI 兼容接口，把 /chat/completions 请求转发给真实 DeepSeek
+            服务（默认上游，可在设置修改），同时自动解析响应里的 usage 入库。你的 API Key
+            只是路过转发，<strong>不会被读取或保存</strong>。
+          </p>
+          <h4 style={{ margin: '14px 0 6px' }}>Python 示例（改一行即可）</h4>
+          <pre className="code-block">{`from openai import OpenAI
 
 client = OpenAI(
     api_key="sk-你的key",          # 保持不变
@@ -111,14 +130,8 @@ resp = client.chat.completions.create(
     messages=[{"role": "user", "content": "你好"}],
 )
 print(resp.choices[0].message.content)`}</pre>
-        <details style={{ marginTop: 10 }}>
-          <summary>curl 直接验证代理（会自动记录）</summary>
-          <pre className="code-block">{`curl ${proxyUrl}/v1/chat/completions \\
-  -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer sk-你的key" \\
-  -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}],"stream":false}'`}</pre>
-        </details>
-      </div>
+        </div>
+      </details>
 
       <div className="panel">
         <h3>手动记一条（备用 / 验证用）</h3>

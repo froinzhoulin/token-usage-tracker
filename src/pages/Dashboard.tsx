@@ -163,10 +163,9 @@ export default function Dashboard() {
       {/* ── 检测状态横幅 ── */}
       <div className={`monitor-bar ${monitoring ? 'on' : 'off'}`}>
         <span className="dot" />
-        <strong>{monitoring ? '检测中' : '未运行'}</strong>
+        <strong>{monitoring ? 'DSH 自动检测中' : '检测服务未运行'}</strong>
         <span className="muted">
-          {vd?.status ? `上报地址 ${vd.status.base_url}/api/v1/usage` : ''}
-          {lastUpdated && ` · 每 ${POLL_MS / 1000}s 自动刷新 · 更新于 ${fmtClock(lastUpdated)}`}
+          {lastUpdated && `每 ${POLL_MS / 1000}s 自动刷新 · 更新于 ${fmtClock(lastUpdated)}`}
         </span>
         {!monitoring && vd?.status?.error && <span className="warn-text">（{vd.status.error}）</span>}
         {vd && <span className="spacer" />}
@@ -275,8 +274,12 @@ export default function Dashboard() {
                       </td>
                       <td className="num">{displayCost(r.cost_usd, cc)}</td>
                       <td>
-                        <span className={`tag ${r.source === 'collector' ? 'tag-project' : ''}`}>
-                          {r.source === 'collector' ? '检测' : r.source}
+                        <span className={`tag ${r.source === 'dsh' ? 'tag-project' : ''}`}>
+                          {r.source === 'dsh'
+                            ? 'DSH'
+                            : r.source === 'collector'
+                              ? '检测'
+                              : r.source}
                         </span>
                         {r.cost_source === 'computed' && <span className="tag">估算</span>}
                       </td>

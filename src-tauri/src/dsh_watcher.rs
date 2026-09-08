@@ -71,6 +71,7 @@ struct TokenBuckets {
     uncached_input_tokens: Option<i64>,
     output_tokens: Option<i64>,
     cache_read_tokens: Option<i64>,
+    #[allow(dead_code)] // 保留结构完整性; 当前不单独计价写缓存
     cache_write_tokens: Option<i64>,
 }
 
