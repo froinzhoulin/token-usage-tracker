@@ -63,6 +63,7 @@ pub fn run() {
             commands::stats::usage_trend,
             commands::stats::usage_distribution,
             commands::stats::dashboard,
+            commands::stats::usage_hourly_trend,
             commands::stats::known_models,
             commands::price::list_prices,
             commands::price::upsert_custom_price,

@@ -62,3 +62,13 @@ pub fn dashboard(db: State<'_, Db>, filter: RecordFilter) -> Result<DashboardDat
         known_models: stats::known_models(&conn).map_err(|e| e.to_string())?,
     })
 }
+
+/// 今日小时级用量(自动检测关注"今天 0-23 点"曲线)
+#[tauri::command]
+pub fn usage_hourly_trend(
+    db: State<'_, Db>,
+    filter: RecordFilter,
+) -> Result<Vec<stats::HourTrendPoint>, String> {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    stats::hourly_trend(&conn, &filter).map_err(|e| e.to_string())
+}

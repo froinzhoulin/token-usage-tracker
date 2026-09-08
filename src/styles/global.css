@@ -557,3 +557,122 @@ select:focus {
   font-size: 12px;
   color: var(--fg-muted);
 }
+
+/* ---- v0.3 监控台布局 ---- */
+.dash-page {
+  gap: 14px;
+}
+.monitor-bar .spacer {
+  flex: 1;
+}
+.hero-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 1000px) {
+  .hero-grid { grid-template-columns: 1fr 1fr; }
+}
+.hero-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+}
+.hero-main {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, var(--bg-panel)), var(--bg-panel));
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+.hero-label {
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.hero-value {
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+.hero-value.accent-value {
+  color: var(--accent);
+}
+.hero-sub {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.dash-mid {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 1000px) {
+  .dash-mid { grid-template-columns: 1fr; }
+}
+.rank-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rank-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.rank-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+.rank-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rank-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rank-num em {
+  font-style: normal;
+  color: var(--fg-muted);
+  margin-left: 8px;
+  font-size: 12px;
+}
+.rank-bar-bg {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.rank-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #10b981));
+  transition: width 0.5s ease;
+}
+.rank-foot {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+tr.fresh td {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+tr.fresh td:first-child::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.recent-tokens {
+  font-variant-numeric: tabular-nums;
+}

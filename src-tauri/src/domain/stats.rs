@@ -99,6 +99,67 @@ pub fn trend(conn: &Connection, f: &RecordFilter) -> Result<Vec<TrendPoint>> {
     Ok(out)
 }
 
+/// 趋势序列中的一个点(按小时, 今日视图用)
+#[derive(Debug, Clone, Serialize)]
+pub struct HourTrendPoint {
+    pub hour: String, // 2026-09-08T14
+    pub total_tokens: i64,
+    pub cost_usd: Option<f64>,
+    pub record_count: i64,
+}
+
+/// 按小时(本地时区)聚合, 返回某日 00~23 的小时序列(无数据补零)。
+pub fn hourly_trend(conn: &Connection, f: &RecordFilter) -> Result<Vec<HourTrendPoint>> {
+    let (where_sql, params) = filter_sql(f);
+    let sql = format!(
+        "SELECT strftime('%Y-%m-%dT%H', recorded_at, 'localtime') AS hour,
+                COALESCE(SUM(prompt_tokens),0) + COALESCE(SUM(completion_tokens),0),
+                SUM(cost_usd),
+                COUNT(*)
+         FROM usage_record {where_sql}
+         GROUP BY hour ORDER BY hour ASC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let out = stmt
+        .query_map(
+            rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+            |r| {
+                Ok(HourTrendPoint {
+                    hour: r.get(0)?,
+                    total_tokens: r.get(1)?,
+                    cost_usd: r.get(2)?,
+                    record_count: r.get(3)?,
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // 若只查了一天, 则补成完整 24 小时(缺的填 0), 便于今日曲线连续
+    if out.iter().all(|p| p.hour.len() >= 13) {
+        let days: std::collections::BTreeSet<String> =
+            out.iter().map(|p| p.hour[..10].to_string()).collect();
+        if days.len() == 1 {
+            let day = days.iter().next().cloned().unwrap_or_default();
+            let filled: Vec<HourTrendPoint> = (0..24)
+                .map(|h| {
+                    let key = format!("{day}T{:02}", h);
+                    out.iter()
+                        .find(|p| p.hour == key)
+                        .cloned()
+                        .unwrap_or(HourTrendPoint {
+                            hour: key,
+                            total_tokens: 0,
+                            cost_usd: None,
+                            record_count: 0,
+                        })
+                })
+                .collect();
+            return Ok(filled);
+        }
+    }
+    Ok(out)
+}
+
 /// 维度分布桶
 #[derive(Debug, Serialize)]
 pub struct DistBucket {
@@ -182,5 +243,32 @@ mod tests {
         assert_eq!(o.record_count, 0);
         assert_eq!(o.total_tokens, 0);
         assert!(o.cost_usd.is_none());
+    }
+
+    #[test]
+    fn hourly_trend_fills_24h_for_single_day() {
+        use crate::domain::records::{insert, NewRecord};
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn).unwrap();
+        let rec = NewRecord {
+            recorded_at: "2026-09-08 10:30:00".into(),
+            source: "manual".into(),
+            model_name: Some("deepseek-v4-flash".into()),
+            prompt_tokens: Some(10),
+            completion_tokens: Some(10),
+            ..Default::default()
+        };
+        insert(&conn, &rec, None).unwrap();
+
+        let f = RecordFilter { from: Some("2026-09-08".into()), to: Some("2026-09-08".into()), ..Default::default() };
+        let points = hourly_trend(&conn, &f).unwrap();
+        assert_eq!(points.len(), 24, "今日应补满 24 小时");
+        // 记录落在某小时(受本机时区影响, 不断言具体小时), 其余 23 小时为 0
+        let nonzero = points.iter().filter(|p| p.total_tokens > 0).count();
+        assert_eq!(nonzero, 1, "应恰有一个小时含数据");
+        let hit = points.iter().find(|p| p.total_tokens == 20).expect("20 tokens 的点存在");
+        assert!(hit.hour.starts_with("2026-09-08T"));
+        let empty = points.iter().find(|p| p.total_tokens == 0).unwrap();
+        assert_eq!(empty.cost_usd, None);
     }
 }

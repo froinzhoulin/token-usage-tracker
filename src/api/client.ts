@@ -106,6 +106,13 @@ export interface TrendPoint {
   record_count: number
 }
 
+export interface HourTrendPoint {
+  hour: string // 2026-09-08T14
+  total_tokens: number
+  cost_usd: number | null
+  record_count: number
+}
+
 export interface DistBucket {
   key: string
   total_tokens: number
@@ -226,6 +233,9 @@ export const deleteRecord = (id: number): Promise<boolean> =>
 
 export const getDashboard = (filter: RecordFilter): Promise<DashboardData> =>
   call('dashboard', { filter }, () => emptyDashboard())
+
+export const getHourlyTrend = (filter: RecordFilter): Promise<HourTrendPoint[]> =>
+  call('usage_hourly_trend', { filter }, () => [])
 
 const emptyDashboard = (): DashboardData => ({
   overview: {
