@@ -2,6 +2,7 @@ pub mod collector;
 pub mod commands;
 pub mod db;
 pub mod domain;
+pub mod dsh_watcher;
 pub mod proxy;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -49,6 +50,36 @@ pub fn run() {
                 });
             }
 
+            // 启动 DSH 本机用量自动检测
+            {
+                let dsh_home = std::env::var("DSH_HOME")
+                    .ok()
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| {
+                        std::env::var("HOME")
+                            .ok()
+                            .map(|h| std::path::PathBuf::from(h).join(".dsh"))
+                    })
+                    .or_else(|| {
+                        std::env::var("USERPROFILE")
+                            .ok()
+                            .map(|h| std::path::PathBuf::from(h).join(".dsh"))
+                    });
+                if let Some(home) = dsh_home {
+                    if home.join("storages").join("session_projcache").join("sessions").is_dir() {
+                        let stop = Arc::new(AtomicBool::new(false));
+                        let conn = db.shared();
+                        let _ = dsh_watcher::start_watcher(
+                            conn,
+                            home,
+                            dsh_watcher::DEFAULT_POLL_MS,
+                            Arc::clone(&stop),
+                        );
+                        app.manage(DshWatcherState { stop });
+                    }
+                }
+            }
+
             app.manage(db);
 
             Ok(())
@@ -89,6 +120,17 @@ pub struct CollectorState {
 }
 
 impl Drop for CollectorState {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// DSH watcher 运行状态(managed state)
+pub struct DshWatcherState {
+    pub stop: Arc<AtomicBool>,
+}
+
+impl Drop for DshWatcherState {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
     }
