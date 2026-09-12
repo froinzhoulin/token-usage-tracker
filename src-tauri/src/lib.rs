@@ -1,3 +1,4 @@
+pub mod claude_code_watcher;
 pub mod collector;
 pub mod commands;
 pub mod db;
@@ -80,6 +81,52 @@ pub fn run() {
                 }
             }
 
+            // 启动 Claude Code 本机用量自动检测(对齐 DSH watcher 体验)
+            {
+                let claude_home = std::env::var("CLAUDE_HOME")
+                    .ok()
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| {
+                        std::env::var("USERPROFILE")
+                            .ok()
+                            .map(|h| std::path::PathBuf::from(h).join(".claude"))
+                    })
+                    .or_else(|| {
+                        std::env::var("HOME")
+                            .ok()
+                            .map(|h| std::path::PathBuf::from(h).join(".claude"))
+                    });
+                let mut cc_info = claude_code_watcher::WatcherInfo {
+                    claude_home: String::new(),
+                    started: false,
+                    error: None,
+                };
+                if let Some(home) = claude_home {
+                    cc_info.claude_home = home.display().to_string();
+                    if home.join("projects").is_dir() {
+                        let stop = Arc::new(AtomicBool::new(false));
+                        let conn = db.shared();
+                        match claude_code_watcher::start_watcher(
+                            conn,
+                            home.clone(),
+                            claude_code_watcher::DEFAULT_POLL_MS,
+                            Arc::clone(&stop),
+                        ) {
+                            Ok(()) => {
+                                cc_info.started = true;
+                                app.manage(ClaudeCodeWatcherState { stop });
+                            }
+                            Err(e) => cc_info.error = Some(e),
+                        }
+                    } else {
+                        cc_info.error = Some("未找到 ~/.claude/projects 目录".into());
+                    }
+                } else {
+                    cc_info.error = Some("未定位到 ~/.claude 路径".into());
+                }
+                app.manage(ClaudeCodeWatcherInfo(Arc::new(Mutex::new(Some(cc_info)))));
+            }
+
             app.manage(db);
 
             Ok(())
@@ -108,6 +155,7 @@ pub fn run() {
             commands::settings::set_settings,
             commands::settings::backup_db,
             commands::settings::restore_db,
+            commands::claude_code::claude_code_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -135,3 +183,17 @@ impl Drop for DshWatcherState {
         self.stop.store(true, Ordering::Relaxed);
     }
 }
+
+/// Claude Code watcher 运行状态(managed state)
+pub struct ClaudeCodeWatcherState {
+    pub stop: Arc<AtomicBool>,
+}
+
+impl Drop for ClaudeCodeWatcherState {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Claude Code watcher 启动信息(供前端展示)
+pub struct ClaudeCodeWatcherInfo(pub Arc<Mutex<Option<claude_code_watcher::WatcherInfo>>>);

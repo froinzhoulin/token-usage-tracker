@@ -19,6 +19,8 @@ export interface HealthInfo {
 export interface RecordFilter {
   from?: string
   to?: string
+  /** 采集来源(软件): dsh | claude_code | proxy | collector | manual */
+  source?: string
   provider_code?: string
   model_name?: string
   project?: string
@@ -126,6 +128,10 @@ export interface DashboardData {
   by_model: DistBucket[]
   by_provider: DistBucket[]
   by_project: DistBucket[]
+  /** 按采集来源(软件)拆分; 忽略 filter.source 自身, 便于标签栏显示各家用量 */
+  by_source: DistBucket[]
+  /** 历史全部来源(不限日期); 标签栏据此保持完整, 不随时间段变化 */
+  sources_all: string[]
   known_models: string[]
 }
 
@@ -190,7 +196,7 @@ async function call<R>(cmd: string, args: unknown, mock: () => R): Promise<R> {
 
 export const getHealth = (): Promise<HealthInfo> =>
   call('health', {}, () => ({
-    app_version: '0.1.0 (browser preview)',
+    app_version: '0.2.0 (browser preview)',
     db_path: null,
     db_ready: false,
     db_version: 0,
@@ -212,6 +218,19 @@ export const collectorStatus = (): Promise<CollectorStatusInfo> =>
     base_url: 'http://127.0.0.1:8765',
   }))
 
+export interface ClaudeCodeWatcherInfo {
+  claude_home: string
+  started: boolean
+  error: string | null
+}
+
+export const claudeCodeStatus = (): Promise<ClaudeCodeWatcherInfo> =>
+  call('claude_code_status', {}, () => ({
+    claude_home: '',
+    started: false,
+    error: 'Browser preview: Tauri backend not connected',
+  }))
+
 export const listRecords = (
   filter: RecordFilter,
   page: number,
@@ -219,7 +238,9 @@ export const listRecords = (
 ): Promise<PageResult> =>
   call(
     'list_records',
-    { q: { filter, page, page_size: pageSize } },
+    // 后端 PageQuery 用 #[serde(flatten)] 承接 RecordFilter: 过滤字段必须平铺在 q 顶层。
+    // 若包成 { q: { filter, ... } }, serde 会把嵌套的 filter 当未知字段静默丢弃(筛选失效)。
+    { q: { ...filter, page, page_size: pageSize } },
     () => ({ rows: [], total: 0, page, page_size: pageSize }),
   )
 
@@ -254,6 +275,8 @@ const emptyDashboard = (): DashboardData => ({
   by_model: [],
   by_provider: [],
   by_project: [],
+  by_source: [],
+  sources_all: [],
   known_models: [],
 })
 

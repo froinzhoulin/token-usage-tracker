@@ -46,6 +46,11 @@ pub struct DashboardData {
     pub by_model: Vec<DistBucket>,
     pub by_provider: Vec<DistBucket>,
     pub by_project: Vec<DistBucket>,
+    /// 按采集来源(软件)拆分: dsh / claude_code / proxy / collector / manual
+    pub by_source: Vec<DistBucket>,
+    /// 历史全部来源(不限日期)。标签栏据此始终完整展示, 避免跨天后
+    /// "今日"无数据的软件连标签一起消失。
+    pub sources_all: Vec<String>,
     pub known_models: Vec<String>,
 }
 
@@ -59,6 +64,8 @@ pub fn dashboard(db: State<'_, Db>, filter: RecordFilter) -> Result<DashboardDat
         by_provider: stats::distribution(&conn, &filter, "provider_code", 10)
             .map_err(|e| e.to_string())?,
         by_project: stats::distribution(&conn, &filter, "project", 10).map_err(|e| e.to_string())?,
+        by_source: stats::source_breakdown(&conn, &filter).map_err(|e| e.to_string())?,
+        sources_all: stats::all_sources(&conn).map_err(|e| e.to_string())?,
         known_models: stats::known_models(&conn).map_err(|e| e.to_string())?,
     })
 }

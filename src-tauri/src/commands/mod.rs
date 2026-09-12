@@ -1,3 +1,4 @@
+pub mod claude_code;
 pub mod collector_status;
 pub mod export;
 pub mod health;

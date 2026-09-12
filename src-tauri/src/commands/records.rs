@@ -51,3 +51,32 @@ pub fn delete_record(db: State<'_, Db>, id: i64) -> Result<bool, String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
     records::delete(&conn, id).map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 固化前端 listRecords 的载荷形态: 过滤字段必须平铺在 q 顶层,
+    /// 由 #[serde(flatten)] 承接。这是"来源/日期筛选生效"的关键契约。
+    #[test]
+    fn page_query_deserializes_flattened_filter() {
+        let q: PageQuery = serde_json::from_str(
+            r#"{"source":"claude_code","from":"2026-09-10","to":"2026-09-10","page":0,"page_size":15}"#,
+        )
+        .expect("平铺载荷应能解析");
+        assert_eq!(q.filter.source.as_deref(), Some("claude_code"));
+        assert_eq!(q.filter.from.as_deref(), Some("2026-09-10"));
+        assert_eq!(q.page, Some(0));
+        assert_eq!(q.page_size, Some(15));
+    }
+
+    /// 已知陷阱: 若前端把 filter 包成嵌套对象, serde 会静默丢弃(不报错),
+    /// 表现为"筛选点了没反应"。此测试固化该行为, 防止前端回退到旧写法。
+    #[test]
+    fn nested_filter_silently_dropped() {
+        let q: PageQuery =
+            serde_json::from_str(r#"{"filter":{"source":"dsh"},"page":0,"page_size":15}"#)
+                .expect("嵌套形态不报错");
+        assert_eq!(q.filter.source, None, "嵌套 filter 被静默丢弃(即筛选失效)");
+    }
+}

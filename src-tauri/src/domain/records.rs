@@ -12,6 +12,8 @@ pub struct RecordFilter {
     pub from: Option<String>,
     /// ISO 日期止(含)
     pub to: Option<String>,
+    /// 采集来源(软件): dsh | claude_code | proxy | collector | manual
+    pub source: Option<String>,
     pub provider_code: Option<String>,
     pub model_name: Option<String>,
     pub project: Option<String>,
@@ -162,6 +164,12 @@ pub fn filter_sql(f: &RecordFilter) -> (String, Vec<Box<dyn rusqlite::types::ToS
         conds.push("recorded_at < ?".to_string());
         params.push(Box::new(local_day_end_exclusive_utc(v)));
     }
+    if let Some(v) = &f.source {
+        if !v.is_empty() {
+            conds.push("source = ?".to_string());
+            params.push(Box::new(v.clone()));
+        }
+    }
     if let Some(v) = &f.provider_code {
         conds.push("provider_code = ?".to_string());
         params.push(Box::new(v.clone()));
@@ -225,8 +233,11 @@ pub fn list_page(
                 cost_usd, cost_source, project, tags, note
          FROM usage_record {where_sql}
          ORDER BY recorded_at DESC, id DESC
-         LIMIT ?1 OFFSET ?2"
+         LIMIT ? OFFSET ?"
     );
+    // 注意: LIMIT/OFFSET 必须用无编号 ? —— filter_sql 生成的 WHERE 也用无编号 ?。
+    // SQLite 会把无编号 ? 依次编号, 二者混用会撞号(如 WHERE 的 ? 变成 ?1 与 LIMIT ?1 重合),
+    // 表现为选中任一来源标签时前端报 "Wrong number of parameters ... Got 3, needed 2"。
     bind.push(Box::new(page_size));
     bind.push(Box::new(offset));
     let mut stmt = conn.prepare(&sql)?;
@@ -549,5 +560,55 @@ mod tests {
         let c = row.cost_usd.unwrap();
         assert!((c - 1.76).abs() < 1e-6, "got {c}");
         assert_eq!(row.cost_source.as_deref(), Some("computed"));
+    }
+
+    /// 回归: 带筛选条件的分页查询必须能正常执行。
+    ///
+    /// 曾经的 bug: WHERE 由 filter_sql 生成(无编号 `?`), 而 LIMIT/OFFSET 写成
+    /// `?1`/`?2`。SQLite 会把无编号 `?` 依次编号, 于是 WHERE 的 `?` 变成 `?1`,
+    /// 与 `LIMIT ?1` 撞号 → 绑定 3 个值却只需 2 个参数, 报
+    /// "Wrong number of parameters passed to query. Got 3, needed 2"。
+    /// 筛选为空时 WHERE 为空, 恰好掩盖了该问题 —— 所以"全部"标签正常,
+    /// 点其它来源标签必崩(并连带 Promise.all 失败, 整个看板冻结)。
+    #[test]
+    fn list_page_works_with_non_empty_filter() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn).unwrap();
+        for (src, at) in [
+            ("dsh", "2026-09-10 10:00:00"),
+            ("claude_code", "2026-09-10 11:00:00"),
+        ] {
+            let rec = NewRecord {
+                recorded_at: at.into(),
+                source: src.into(),
+                model_name: Some("m1".into()),
+                prompt_tokens: Some(10),
+                completion_tokens: Some(5),
+                ..Default::default()
+            };
+            insert(&conn, &rec, None).unwrap();
+        }
+
+        // 单条件(来源): 正是点标签触发的路径
+        let f = RecordFilter { source: Some("dsh".into()), ..Default::default() };
+        let rows = list_page(&conn, &f, 0, 50).expect("按来源分页不应报参数数量错误");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source, "dsh");
+        assert_eq!(count(&conn, &f).unwrap(), 1);
+
+        // 多条件(日期 + 来源): 参数更多, 撞号更明显
+        let f2 = RecordFilter {
+            from: Some("2026-09-10".into()),
+            to: Some("2026-09-10".into()),
+            source: Some("claude_code".into()),
+            ..Default::default()
+        };
+        let rows2 = list_page(&conn, &f2, 0, 50).expect("日期+来源组合不应报错");
+        assert_eq!(rows2.len(), 1);
+        assert_eq!(rows2[0].source, "claude_code");
+
+        // 无筛选(全部标签)仍应正常
+        let rows3 = list_page(&conn, &RecordFilter::default(), 0, 50).expect("空筛选不应报错");
+        assert_eq!(rows3.len(), 2);
     }
 }

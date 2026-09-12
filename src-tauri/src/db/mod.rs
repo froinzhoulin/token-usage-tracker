@@ -36,7 +36,7 @@ pub fn open(path: &std::path::Path) -> rusqlite::Result<Connection> {
 }
 
 /// 当前 schema 版本。每次结构变更 +1，并在 migrate 中追加增量脚本。
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 /// 执行增量迁移并 seed 内置价格库。返回迁移后的版本号。
 pub fn migrate(conn: &Connection) -> rusqlite::Result<u32> {
@@ -146,6 +146,22 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<u32> {
         )?;
     }
 
+    if current < 3 {
+        // 修正 Claude Code 检测器的历史写入错误:
+        // 早期版本把模型名同时写进 provider_code, 导致明细渲染成
+        // "MiniMax-M3 MiniMax-M3"(厂商与模型重复), 并把模型名当成一家厂商计数。
+        // 只清理 claude_code 来源中 "provider_code 与 model_name 完全相同" 的行,
+        // 不触碰其它来源的数据。
+        conn.execute(
+            "UPDATE usage_record
+                SET provider_code = NULL
+              WHERE source = 'claude_code'
+                AND provider_code IS NOT NULL
+                AND provider_code = model_name",
+            [],
+        )?;
+    }
+
     // seed 内置厂商/模型/价格(幂等: 仅当 provider 表为空)
     price::seed_builtin(conn)?;
 
@@ -176,4 +192,54 @@ fn seed_settings(conn: &Connection) -> rusqlite::Result<()> {
 /// 返回当前 user_version（只读，供诊断）。
 pub fn version(conn: &Connection) -> rusqlite::Result<u32> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// v3 迁移: 清空 claude_code 中 provider_code == model_name 的脏数据,
+    /// 且不误伤其它来源(它们的厂商与模型本来就不同)。
+    #[test]
+    fn migration_v3_cleans_claude_provider_dup() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        // 模拟旧版本写入的脏数据
+        conn.execute(
+            "INSERT INTO usage_record(recorded_at, source, provider_code, model_name)
+             VALUES('2026-09-10T00:00:00.000Z','claude_code','MiniMax-M3','MiniMax-M3')",
+            [],
+        )
+        .unwrap();
+        // 正常数据(厂商与模型不同) —— 不应被改动
+        conn.execute(
+            "INSERT INTO usage_record(recorded_at, source, provider_code, model_name)
+             VALUES('2026-09-10T00:00:00.000Z','dsh','deepseek','deepseek-v4-flash')",
+            [],
+        )
+        .unwrap();
+
+        // 回退版本号, 触发 v3 迁移重跑
+        conn.pragma_update(None, "user_version", 2).unwrap();
+        migrate(&conn).unwrap();
+
+        let bad: Option<String> = conn
+            .query_row(
+                "SELECT provider_code FROM usage_record WHERE source='claude_code'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(bad, None, "重复的厂商字段应被清空");
+
+        let good: Option<String> = conn
+            .query_row(
+                "SELECT provider_code FROM usage_record WHERE source='dsh'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(good.as_deref(), Some("deepseek"), "其它来源不应被误伤");
+    }
 }

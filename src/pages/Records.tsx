@@ -309,7 +309,11 @@ export default function Records() {
                   <tr key={r.id}>
                     <td>{fmtDate(r.recorded_at)}</td>
                     <td>
-                      <span className="provider">{r.provider_code ?? '-'}</span>{' '}
+                      {r.provider_code && (
+                        <>
+                          <span className="provider">{r.provider_code}</span>{' '}
+                        </>
+                      )}
                       {r.model_name ?? '-'}
                     </td>
                     <td title={r.session_id ?? ''} className="ellipsis">

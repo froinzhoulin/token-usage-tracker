@@ -1,7 +1,7 @@
 # Token Usage Tracker
 
 > 本地运行的 LLM Token 用量统计与分析桌面工具。
-> 自动检测 DeepSeek Harness 用量 · 本地透明代理采集 · 数据 100% 存本机，不上传任何东西。
+> 自动检测 DeepSeek Harness 与 Claude Code 用量 · 本地透明代理采集 · 数据 100% 存本机，不上传任何东西。
 
 ![Tauri 2](https://img.shields.io/badge/Tauri-2.x-24C8D8?logo=tauri&logoColor=white)
 ![React 18](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
@@ -13,16 +13,18 @@ LLM 用量分散在多次会话、多个客户端里，说不清**花了多少�
 
 ## 功能特性
 
-**数据采集（三条通道，可叠加使用）**
+**数据采集（四条通道，可叠加使用）**
 
 - 🔍 **DSH 自动检测**（零配置）：应用启动后自动读取 DeepSeek Harness 的会话用量快照，每 3 秒增量入库，模型/厂商/会话/缓存自动识别，重启不重复计数
+- 🤖 **Claude Code 自动检测**（零配置）：增量读取 `~/.claude/projects/**/*.jsonl` 中 assistant 行的 `usage`，按 `message.id` 去重，每 3 秒轮询，重启不重复计数
 - 🔁 **本地透明代理**：把任意 OpenAI 兼容客户端的 `base_url` 改成本机地址即可，自动转发 + 自动解析（流式/非流式）响应里的 usage；API Key 只透传、不读取、不落盘
 - 📮 **HTTP 上报端点**：`POST /api/v1/usage`，供脚本/程序随时上报；另有手动表单录入兜底
 - ✅ 按 `request_id` 去重，同一调用永远不会被统计两次
 
 **统计与成本**
 
-- 📊 看板：今日 24 小时柱状图 / 按日 Token+费用双轴趋势 / 模型用量排行 / 最近检测实时流，5 秒自动刷新
+- 📊 看板：来源（软件）标签筛选 · 今日 24 小时柱状图 / 按日 Token+费用双轴趋势 / 模型用量排行 / 按软件拆分 / 最近检测实时流，5 秒自动刷新
+- 🧩 **来源标签筛选**：一键在 DSH / Claude Code / 本地代理 / HTTP 上报之间切换，所有面板联动；标签栏始终列出全部软件（当前时间段无数据的软件会弱化显示，不会消失）
 - 💰 内置价格库（DeepSeek / OpenAI / Anthropic / Kimi，USD per 百万 Token），支持自定义单价覆盖与模型别名映射（如 `deepseek-chat` → `deepseek-v4-flash`）
 - 🏷 费用优先级：官方账单金额 > 单价自动换算（明细中标注「估算」）；展示币种 CNY / USD 可切换（手动汇率）
 - 📋 明细：分页 / 多条件筛选 / 行内编辑 / 删除；导出 CSV（UTF-8 BOM，Excel 友好）/ JSON；数据库一键备份与恢复
@@ -33,7 +35,18 @@ LLM 用量分散在多次会话、多个客户端里，说不清**花了多少�
 
 本机存在 `~/.dsh` 时自动开始：轮询 `~/.dsh/storages/session_projcache/sessions/*.json`，以 `(turn, step)` 水位线识别每一次新调用。入库口径：`prompt = 未缓存输入 + 缓存命中`，缓存 Token 单列以便分开计价。你在 DSH 里正常对话即可，无需任何改动。
 
-### 2) 本地透明代理
+### 2) Claude Code 自动检测（零配置）
+
+本机存在 `~/.claude/projects` 时自动开始：增量读取 `~/.claude/projects/<编码后的工作目录>/<会话 id>.jsonl` 中 `type=assistant` 行携带的 `message.usage`。要点：
+
+- **按 `message.id` 去重**：一次 LLM 调用会被写成 text / thinking / tool_use 多行，共享同一份 `usage`，只入库一次
+- **增量读**：记住每个文件的字节偏移与已见 message.id，只解析追加部分；文件被截断时自动重读（由 `request_id` 唯一索引兜底去重）
+- **口径**：`prompt = input + cache_creation + cache_read`，缓存命中单列（`cache_read`）以便分开计价
+- **模型名原样保留**：jsonl 不含厂商字段，故厂商留空；可在设置页按模型名添加自定义单价，费用即自动估算
+
+你在 Claude Code 里正常对话即可，无需任何改动。
+
+### 3) 本地透明代理
 
 在你的程序里只改一行 API 地址（模型名和 Key 保持不变）：
 
@@ -47,7 +60,7 @@ client = OpenAI(
 - 流式请求自动注入 `stream_options.include_usage=true`，打字机体验不受影响
 - 上游地址可在设置页更换（Kimi / 智谱 / 通义等任何 OpenAI 兼容服务）
 
-### 3) HTTP 上报端点
+### 4) HTTP 上报端点
 
 ```bash
 curl -X POST http://127.0.0.1:8765/api/v1/usage \
@@ -63,8 +76,8 @@ curl -X POST http://127.0.0.1:8765/api/v1/usage \
 
 系统要求：Windows 10/11（含 WebView2 运行时）。
 
-1. 下载安装包 `Token Usage Tracker_0.1.0_x64-setup.exe`（或直接运行绿色版 `token-usage-tracker.exe`）
-2. 打开应用即可——本机有 `~/.dsh` 时自动检测即刻生效，到「看板」页等待数据点亮
+1. 下载安装包 `Token Usage Tracker_0.2.0_x64-setup.exe`（或直接运行绿色版 `token-usage-tracker.exe`）
+2. 打开应用即可——本机存在 `~/.dsh` 或 `~/.claude/projects` 时自动检测即刻生效，到「看板」页等待数据点亮
 
 ### 从源码构建
 
@@ -82,7 +95,7 @@ npm run tauri build    # 产出安装包
 
 ```bash
 cd src-tauri
-cargo test --lib                                                        # 19 项单元测试
+cargo test --lib                                                        # 31 项单元测试
 cargo test --test integration                                           # 导入-统计-导出全链路
 cargo test --release --test integration perf_100k -- --ignored --nocapture   # 10 万行性能验收
 ```
@@ -102,6 +115,7 @@ token-usage-tracker/
 │  ├─ src/collector.rs      # 127.0.0.1 HTTP 收集端点
 │  ├─ src/proxy.rs          # OpenAI 兼容透明代理
 │  ├─ src/dsh_watcher.rs    # DSH 快照水位线检测
+│  ├─ src/claude_code_watcher.rs  # Claude Code jsonl 增量检测
 │  └─ tests/integration.rs  # 端到端集成测试
 └─ scripts/                 # 图标生成等辅助脚本
 ```
@@ -116,8 +130,25 @@ token-usage-tracker/
 ## 已知限制
 
 - DSH 快照格式若随 DSH 版本升级变化，解析逻辑需同步更新
+- Claude Code 的 jsonl 格式若随版本变化，解析逻辑需同步更新；该文件不含厂商字段，故 Claude Code 记录的厂商留空（需在设置页按模型名自定义单价才能估算费用）
 - 应用未运行期间的多次调用，只能补记每会话最后一次（快照仅含最近一次调用的用量）
 - CSV 导入界面暂未开放（后端解析已实现并测试覆盖，计划在后续版本回归）
+
+## 更新日志
+
+### v0.2.0
+
+- ✨ 新增 **Claude Code 自动检测**通道：读取 `~/.claude/projects/**/*.jsonl`，按 `message.id` 去重、字节偏移增量读，与 DSH 检测同为零配置
+- ✨ 看板新增 **来源（软件）标签筛选**：DSH / Claude Code / 本地代理 / HTTP 上报一键切换，所有面板联动；标签栏始终完整，不随时间段消失
+- ✨ 看板新增 **按软件拆分**面板：各软件 Token 占比、费用与记录次数
+- 🐛 修复明细页筛选静默失效（前端 `filter` 被 serde 静默丢弃，日期/厂商/模型/关键词筛选此前全部无效）
+- 🐛 修复带筛选条件时分页查询报 `Wrong number of parameters`（SQL 中无编号 `?` 与 `?1`/`?2` 撞号）
+- 🐛 修复来源标签随日期范围消失、导致误以为数据丢失的问题
+- 🔧 数据迁移 v3：清理 Claude Code 早期版本误写入的厂商字段
+
+### v0.1.0
+
+首个版本：DSH 自动检测 / 本地透明代理 / HTTP 上报端点三条采集通道，看板、明细、价格库与备份恢复。
 
 ## 路线图
 

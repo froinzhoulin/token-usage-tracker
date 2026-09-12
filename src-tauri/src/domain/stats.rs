@@ -177,7 +177,7 @@ pub fn distribution(
     limit: i64,
 ) -> Result<Vec<DistBucket>> {
     let dim = match dimension {
-        "provider_code" | "model_name" | "project" | "session_id" => dimension,
+        "provider_code" | "model_name" | "project" | "session_id" | "source" => dimension,
         _ => "model_name",
     };
     let (where_sql, params) = filter_sql(f);
@@ -207,9 +207,35 @@ pub fn distribution(
     Ok(out)
 }
 
-/// 供下拉框用的模型清单(出现过 + 价格库)
-pub fn known_models(conn: &Connection) -> Result<Vec<String>> {
+/// 按采集来源(软件)拆分用量, 供看板来源标签筛选使用。
+///
+/// 注意: 内部会清掉 `f.source` 再聚合 —— 否则选中某个来源后,
+/// 其它标签的计数会全部归零, 标签栏就没法在"选中态"下继续显示各家用量。
+/// 日期范围等其它条件仍然生效。
+pub fn source_breakdown(conn: &Connection, f: &RecordFilter) -> Result<Vec<DistBucket>> {
+    let mut unselected = f.clone();
+    unselected.source = None;
+    distribution(conn, &unselected, "source", 50)
+}
+
+/// 全部历史出现过的采集来源(不限日期)。
+///
+/// 供看板来源标签栏使用: 标签必须始终完整。若标签列表受日期范围约束,
+/// 跨天之后"今日"没有数据的软件会连标签一起消失, 用户会误以为数据丢失。
+pub fn all_sources(conn: &Connection) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(
+        "SELECT DISTINCT source FROM usage_record
+         WHERE source IS NOT NULL AND source <> ''
+         ORDER BY 1",
+    )?;
+    let out = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(out)
+}
+
+/// 供下拉框用的模型清单(出现过 + 价格库)
+pub fn known_models(conn: &Connection) -> Result<Vec<String>> {    let mut stmt = conn.prepare(
         "SELECT DISTINCT model_name FROM usage_record
          WHERE model_name IS NOT NULL AND model_name <> ''
          UNION
@@ -246,8 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn hourly_trend_fills_24h_for_single_day() {
-        use crate::domain::records::{insert, NewRecord};
+    fn hourly_trend_fills_24h_for_single_day() {        use crate::domain::records::{insert, NewRecord};
         let conn = Connection::open_in_memory().unwrap();
         crate::db::migrate(&conn).unwrap();
         let rec = NewRecord {
@@ -270,5 +295,105 @@ mod tests {
         assert!(hit.hour.starts_with("2026-09-08T"));
         let empty = points.iter().find(|p| p.total_tokens == 0).unwrap();
         assert_eq!(empty.cost_usd, None);
+    }
+
+    /// 播种三条不同来源/日期的记录
+    fn seed_sources(conn: &Connection) {
+        use crate::domain::records::{insert, NewRecord};
+        let rows = [
+            ("dsh", "2026-09-08 10:00:00"),
+            ("claude_code", "2026-09-08 11:00:00"),
+            ("claude_code", "2026-09-09 11:00:00"),
+        ];
+        for (src, at) in rows {
+            let rec = NewRecord {
+                recorded_at: at.into(),
+                source: src.into(),
+                model_name: Some("m1".into()),
+                prompt_tokens: Some(100),
+                completion_tokens: Some(50),
+                ..Default::default()
+            };
+            insert(conn, &rec, None).unwrap();
+        }
+    }
+
+    #[test]
+    fn filter_by_source_selects_single_software() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn).unwrap();
+        seed_sources(&conn);
+
+        let all = overview(&conn, &RecordFilter::default()).unwrap();
+        assert_eq!(all.record_count, 3);
+
+        let f = RecordFilter { source: Some("claude_code".into()), ..Default::default() };
+        let only_cc = overview(&conn, &f).unwrap();
+        assert_eq!(only_cc.record_count, 2, "应只剩 Claude Code 的 2 条");
+        assert_eq!(only_cc.total_tokens, 300, "2 条 × (100+50)");
+
+        // 空字符串视为"不筛选"(前端 '全部' 标签)
+        let f_empty = RecordFilter { source: Some(String::new()), ..Default::default() };
+        assert_eq!(overview(&conn, &f_empty).unwrap().record_count, 3);
+    }
+
+    #[test]
+    fn source_breakdown_ignores_source_filter_but_keeps_date() {        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn).unwrap();
+        seed_sources(&conn);
+
+        // 选中 dsh 的同时请求标签栏数据: 仍应看到两个来源(否则标签栏会塌成一项)
+        let f = RecordFilter {
+            from: Some("2026-09-08".into()),
+            to: Some("2026-09-08".into()),
+            source: Some("dsh".into()),
+            ..Default::default()
+        };
+        let buckets = source_breakdown(&conn, &f).unwrap();
+        let mut keys: Vec<String> = buckets.iter().map(|b| b.key.clone()).collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec!["claude_code".to_string(), "dsh".to_string()],
+            "应忽略 source 自身, 但受日期范围约束(9-09 的记录被排除)"
+        );
+        // 每个来源各 1 条(9-08 当天)
+        for b in &buckets {
+            assert_eq!(b.record_count, 1, "来源 {} 在 9-08 只有 1 条", b.key);
+            assert_eq!(b.total_tokens, 150);
+        }
+    }
+
+    /// 标签栏的来源清单必须与日期范围无关。
+    ///
+    /// 回归背景: 标签列表若只用"当前时间段有数据的来源", 跨天之后
+    /// (如 00:08 时默认「今日」已翻到新的一天) 没有新数据的软件会连标签
+    /// 一起消失, 用户会以为数据丢了 —— 实际数据仍在库里。
+    #[test]
+    fn all_sources_is_range_independent() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn).unwrap();
+        seed_sources(&conn); // dsh(9-08), claude_code(9-08), claude_code(9-09)
+
+        assert_eq!(
+            all_sources(&conn).unwrap(),
+            vec!["claude_code".to_string(), "dsh".to_string()]
+        );
+
+        // 限定到一个完全没有数据的日期: 面板数据为空, 但标签清单不缩水
+        let empty_day = RecordFilter {
+            from: Some("2026-09-30".into()),
+            to: Some("2026-09-30".into()),
+            ..Default::default()
+        };
+        assert!(
+            source_breakdown(&conn, &empty_day).unwrap().is_empty(),
+            "该日期确实没有数据"
+        );
+        assert_eq!(
+            all_sources(&conn).unwrap().len(),
+            2,
+            "标签清单不应随日期范围缩水"
+        );
     }
 }
