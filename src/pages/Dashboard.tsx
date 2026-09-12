@@ -3,18 +3,22 @@ import type { EChartsOption } from 'echarts'
 
 import {
   claudeCodeStatus,
+  codexStatus,
   collectorStatus,
   getDashboard,
   getHourlyTrend,
   getSettings,
   listRecords,
+  workbuddyStatus,
   type ClaudeCodeWatcherInfo,
+  type CodexWatcherInfo,
   type CollectorStatusInfo,
   type DashboardData,
   type DistBucket,
   type HourTrendPoint,
   type RecordFilter,
   type UsageRecord,
+  type WorkBuddyWatcherInfo,
 } from '../api/client'
 import type { SettingsView } from '../api/client'
 import Chart from '../components/Chart'
@@ -41,6 +45,8 @@ const RANGES = [
 const SOURCE_LABELS: Record<string, string> = {
   dsh: 'DSH',
   claude_code: 'Claude Code',
+  codex: 'Codex',
+  workbuddy: 'WorkBuddy',
   proxy: '本地代理',
   collector: 'HTTP 上报',
   manual: '手动录入',
@@ -53,6 +59,8 @@ interface ViewData {
   recent: UsageRecord[]
   status: CollectorStatusInfo | null
   ccStatus: ClaudeCodeWatcherInfo | null
+  cxStatus: CodexWatcherInfo | null
+  wbStatus: WorkBuddyWatcherInfo | null
   /** 各来源(软件)用量; 后端忽略 source 自身筛选, 便于标签栏始终显示各家对比 */
   sources: DistBucket[]
 }
@@ -96,12 +104,14 @@ export default function Dashboard() {
     // "最近检测到" 是活动流: 只按来源过滤, 不受日期范围限制(保留原行为)
     const recentFilter: RecordFilter = sourceRef.current ? { source: sourceRef.current } : {}
     try {
-      const [dash, hourly, rc, st, ccSt] = await Promise.all([
+      const [dash, hourly, rc, st, ccSt, cxSt, wbSt] = await Promise.all([
         getDashboard(f),
         getHourlyTrend(f),
         listRecords(recentFilter, 0, 15),
         collectorStatus(),
         claudeCodeStatus(),
+        codexStatus(),
+        workbuddyStatus(),
       ])
       setVd({
         dash,
@@ -109,6 +119,8 @@ export default function Dashboard() {
         recent: rc.rows,
         status: st,
         ccStatus: ccSt,
+        cxStatus: cxSt,
+        wbStatus: wbSt,
         sources: dash.by_source ?? [],
       })
       setError(null)
@@ -211,19 +223,23 @@ export default function Dashboard() {
     return [...inRange, ...extra]
   })()
 
+  /** 正在运行的自动检测通道(可叠加) */
+  const activeChannels = [
+    monitoring ? 'DSH' : null,
+    vd?.ccStatus?.started ? 'Claude Code' : null,
+    vd?.cxStatus?.started ? 'Codex' : null,
+    vd?.wbStatus?.started ? 'WorkBuddy' : null,
+  ].filter((x): x is string => x !== null)
+
   return (
     <div className="page dash-page">
       {/* ── 检测状态横幅 ── */}
       <div className={`monitor-bar ${monitoring ? 'on' : 'off'}`}>
         <span className="dot" />
         <strong>
-          {monitoring && vd?.ccStatus?.started
-            ? 'DSH + Claude Code 自动检测中'
-            : monitoring
-              ? 'DSH 自动检测中'
-              : vd?.ccStatus?.started
-                ? 'Claude Code 自动检测中'
-                : '检测服务未运行'}
+          {activeChannels.length
+            ? `${activeChannels.join(' + ')} 自动检测中`
+            : '检测服务未运行'}
         </strong>
         <span className="muted">
           {lastUpdated && `每 ${POLL_MS / 1000}s 自动刷新 · 更新于 ${fmtClock(lastUpdated)}`}
@@ -441,22 +457,42 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* ── Claude Code watcher 状态 ── */}
+          {/* ── 自动检测通道状态 ── */}
           <div className="panel">
-            <h3>Claude Code 自动检测</h3>
-            <div className="muted" style={{ marginBottom: 6 }}>
-              读取 <code>~/.claude/projects/&lt;cwd&gt;/&lt;session&gt;.jsonl</code> 中 assistant 行的 usage,
-              每 3 秒增量入库。模型名原样保留, 命中价格库时自动计费。
+            <h3>自动检测通道</h3>
+            <div className="muted" style={{ marginBottom: 8 }}>
+              零配置：应用启动后每 3 秒增量读取本地用量文件并自动入库，重启不会重复计数。
             </div>
-            {vd.ccStatus?.started ? (
-              <p className="ok-text">
-                ✓ 运行中 · 路径 <code>{vd.ccStatus.claude_home}</code>
-              </p>
-            ) : (
-              <p className="warn-text">
-                ✗ 未启动{vd.ccStatus?.error ? ` · ${vd.ccStatus.error}` : ''}
-              </p>
-            )}
+            <p className={vd.ccStatus?.started ? 'ok-text' : 'warn-text'}>
+              {vd.ccStatus?.started ? '✓' : '✗'} <strong>Claude Code</strong>{' '}
+              {vd.ccStatus?.started ? (
+                <>
+                  运行中 · <code>{vd.ccStatus.claude_home}\projects\**\*.jsonl</code>
+                </>
+              ) : (
+                <>未启动{vd.ccStatus?.error ? ` · ${vd.ccStatus.error}` : ''}</>
+              )}
+            </p>
+            <p className={vd.cxStatus?.started ? 'ok-text' : 'warn-text'}>
+              {vd.cxStatus?.started ? '✓' : '✗'} <strong>Codex</strong>{' '}
+              {vd.cxStatus?.started ? (
+                <>
+                  运行中 · <code>{vd.cxStatus.codex_home}\sessions\**\rollout-*.jsonl</code>
+                </>
+              ) : (
+                <>未启动{vd.cxStatus?.error ? ` · ${vd.cxStatus.error}` : ''}</>
+              )}
+            </p>
+            <p className={vd.wbStatus?.started ? 'ok-text' : 'warn-text'}>
+              {vd.wbStatus?.started ? '✓' : '✗'} <strong>WorkBuddy</strong>{' '}
+              {vd.wbStatus?.started ? (
+                <>
+                  运行中 · <code>{vd.wbStatus.workbuddy_home}\projects\**\*.jsonl</code>
+                </>
+              ) : (
+                <>未启动{vd.wbStatus?.error ? ` · ${vd.wbStatus.error}` : ''}</>
+              )}
+            </p>
           </div>
         </>
       )}

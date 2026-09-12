@@ -14,6 +14,9 @@ src-tauri/gen/schemas/
 # Local design docs (not published)
 docs/
 
+# Tool-local state (WorkBuddy 工作区记忆等, 不入库)
+.workbuddy/
+
 # OS / editor junk
 .DS_Store
 Thumbs.db

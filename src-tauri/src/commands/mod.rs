@@ -1,4 +1,5 @@
 pub mod claude_code;
+pub mod codex;
 pub mod collector_status;
 pub mod export;
 pub mod health;
@@ -7,3 +8,4 @@ pub mod price;
 pub mod records;
 pub mod settings;
 pub mod stats;
+pub mod workbuddy;

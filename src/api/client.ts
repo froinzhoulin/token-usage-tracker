@@ -196,7 +196,7 @@ async function call<R>(cmd: string, args: unknown, mock: () => R): Promise<R> {
 
 export const getHealth = (): Promise<HealthInfo> =>
   call('health', {}, () => ({
-    app_version: '0.2.0 (browser preview)',
+    app_version: '0.3.0 (browser preview)',
     db_path: null,
     db_ready: false,
     db_version: 0,
@@ -223,6 +223,32 @@ export interface ClaudeCodeWatcherInfo {
   started: boolean
   error: string | null
 }
+
+export interface CodexWatcherInfo {
+  codex_home: string
+  started: boolean
+  error: string | null
+}
+
+export interface WorkBuddyWatcherInfo {
+  workbuddy_home: string
+  started: boolean
+  error: string | null
+}
+
+export const workbuddyStatus = (): Promise<WorkBuddyWatcherInfo> =>
+  call('workbuddy_status', {}, () => ({
+    workbuddy_home: '',
+    started: false,
+    error: 'Browser preview: Tauri backend not connected',
+  }))
+
+export const codexStatus = (): Promise<CodexWatcherInfo> =>
+  call('codex_status', {}, () => ({
+    codex_home: '',
+    started: false,
+    error: 'Browser preview: Tauri backend not connected',
+  }))
 
 export const claudeCodeStatus = (): Promise<ClaudeCodeWatcherInfo> =>
   call('claude_code_status', {}, () => ({
