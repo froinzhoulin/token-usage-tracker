@@ -150,7 +150,7 @@ export interface SettingsView {
   display_currency: string
   usd_cny_rate: number
   collector_upstream: string
-  /** Hermes Agent 数据目录; 留空 = 自动探测(免安装版需手动指定) */
+  /** Hermes Agent 数据目录; 留空 = 自动探测(含运行中的免安装版) */
   hermes_home: string
 }
 

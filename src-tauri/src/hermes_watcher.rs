@@ -7,9 +7,9 @@
 //!     `<hermes home>/profiles/<name>/state.db`, 本检测器会一并扫描)
 //!   - **免安装(portable)版**把 home 放在安装目录下
 //!     (`<免安装根目录>\data\hermes-home`), 既没有注册表项也没有快捷方式线索,
-//!     无法自动探测 —— 这类安装请在设置页指定「Hermes 数据目录」
-//!     (kv_settings.hermes_home; 填免安装根目录、`...\data\hermes-home`
-//!     或 `state.db` 文件路径都可以, 见 [`normalise_home`])。
+//!     所以额外从**正在运行的 Hermes 进程**路径反推(见 [`discover_running_homes`]);
+//!     也可以在设置页显式指定(kv_settings.hermes_home; 填免安装根目录、
+//!     `...\data\hermes-home` 或 `state.db` 文件路径都可以, 见 [`normalise_home`])。
 //!
 //! ## 为什么是"水位线取增量"
 //!
@@ -60,8 +60,7 @@ use crate::domain::records::NewRecord;
 pub const DEFAULT_POLL_MS: u64 = 3000;
 
 /// 设置页里"Hermes 数据目录"对应的 kv_settings 键。
-/// 留空 = 自动探测(见 [`resolve_home`]); 免安装版没有注册表/快捷方式线索,
-/// 需要用户显式指定(可直接填免安装根目录或 `state.db` 的路径)。
+/// 留空 = 自动探测; 也可显式指定(免安装根目录 / `data\hermes-home` / `state.db` 都行)。
 pub const HOME_SETTING_KEY: &str = "hermes_home";
 
 /// 启动结果(供前端展示)。
@@ -76,14 +75,19 @@ pub struct WatcherInfo {
 
 // ---------------- Hermes home / 库文件定位 ----------------
 
-/// 解析 Hermes home: `HERMES_HOME` → Windows `%LOCALAPPDATA%\hermes` → `~/.hermes`。
-pub fn resolve_home() -> Option<PathBuf> {
-    if let Ok(v) = std::env::var("HERMES_HOME") {
-        let p = PathBuf::from(v);
-        if !p.as_os_str().is_empty() {
-            return Some(p);
-        }
+/// `HERMES_HOME` 环境变量(Hermes 自己解析 home 的第一优先级)。
+fn env_home() -> Option<PathBuf> {
+    let v = std::env::var("HERMES_HOME").ok()?;
+    let p = PathBuf::from(v);
+    if p.as_os_str().is_empty() {
+        None
+    } else {
+        Some(p)
     }
+}
+
+/// 平台默认 home: Windows `%LOCALAPPDATA%\hermes`, 其它平台 `~/.hermes`。
+fn platform_default_home() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         if let Ok(v) = std::env::var("LOCALAPPDATA") {
@@ -94,6 +98,162 @@ pub fn resolve_home() -> Option<PathBuf> {
         .or_else(|_| std::env::var("HOME"))
         .ok()
         .map(|h| PathBuf::from(h).join(".hermes"))
+}
+
+/// 静态解析 Hermes home: `HERMES_HOME` → 平台默认。
+///
+/// 注意免安装(portable)版把 home 放在安装目录里, 这里探测不到 ——
+/// 由 [`discover_running_homes`] 从其运行中的进程路径反推。
+pub fn resolve_home() -> Option<PathBuf> {
+    env_home().or_else(platform_default_home)
+}
+
+/// 从某个可执行文件路径向上找 Hermes home(免安装版布局):
+/// `<root>\Hermes Agent CN Desktop.exe` → `<root>\data\hermes-home`;
+/// 运行时子进程在 `<root>\data\versions\<ver>\...` 深处, 所以逐级上溯。
+/// 只认真正含 `state.db` 的目录, 避免把无关目录当 home。
+fn home_from_exe(exe: &Path) -> Option<PathBuf> {
+    let mut dir = exe.parent();
+    let mut hops = 0;
+    while let Some(d) = dir {
+        for cand in [d.join("data").join("hermes-home"), d.join("hermes-home")] {
+            if cand.join("state.db").is_file() {
+                return Some(cand);
+            }
+        }
+        hops += 1;
+        if hops >= 6 {
+            break; // 免安装根目录就在 exe 上方几级, 不必上溯到盘根
+        }
+        dir = d.parent();
+    }
+    None
+}
+
+/// 探测本机**正在运行**的 Hermes 进程, 反推其数据目录(免安装版唯一可行的自动识别方式:
+/// 既没有注册表项也没有快捷方式)。返回去重后的 home 列表。
+pub fn discover_running_homes() -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for exe in process_image_paths() {
+        let name = exe
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if !name.contains("hermes") {
+            continue;
+        }
+        if let Some(h) = home_from_exe(&exe) {
+            if !out.contains(&h) {
+                out.push(h);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// 列出当前所有进程的可执行文件全路径(Windows; 其它平台返回空)。
+#[cfg(windows)]
+fn process_image_paths() -> Vec<PathBuf> {
+    win_process::image_paths()
+}
+
+#[cfg(not(windows))]
+fn process_image_paths() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+/// 极小的 Win32 进程枚举(不引入额外 crate):
+/// `EnumProcesses` 拿 PID → `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`
+/// → `QueryFullProcessImageNameW` 拿全路径。失败/无权限的进程直接跳过。
+#[cfg(windows)]
+mod win_process {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use std::path::PathBuf;
+
+    type Handle = *mut core::ffi::c_void;
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> Handle;
+        fn QueryFullProcessImageNameW(h: Handle, flags: u32, buf: *mut u16, size: *mut u32) -> i32;
+        fn CloseHandle(h: Handle) -> i32;
+    }
+
+    #[link(name = "psapi")]
+    extern "system" {
+        fn EnumProcesses(pids: *mut u32, cb: u32, needed: *mut u32) -> i32;
+    }
+
+    fn image_path(pid: u32) -> Option<PathBuf> {
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return None;
+            }
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len);
+            CloseHandle(h);
+            if ok == 0 || len == 0 {
+                return None;
+            }
+            Some(PathBuf::from(OsString::from_wide(&buf[..len as usize])))
+        }
+    }
+
+    pub fn image_paths() -> Vec<PathBuf> {
+        let mut cap = 1024usize;
+        loop {
+            let mut pids = vec![0u32; cap];
+            let mut needed = 0u32;
+            let ok = unsafe {
+                EnumProcesses(pids.as_mut_ptr(), (pids.len() * 4) as u32, &mut needed)
+            };
+            if ok == 0 {
+                return Vec::new();
+            }
+            let count = (needed / 4) as usize;
+            if count >= cap && cap < 16384 {
+                cap *= 2;
+                continue;
+            }
+            pids.truncate(count);
+            return pids
+                .into_iter()
+                .filter(|p| *p != 0)
+                .filter_map(image_path)
+                .collect();
+        }
+    }
+}
+
+/// 进程探测有成本, 30 秒内复用结果; 结果只增不减(进程退出后其库文件仍在,
+/// 依旧可以继续读, 不必把已识别的目录丢掉)。
+fn discovered_homes_cached() -> Vec<PathBuf> {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Instant;
+
+    const TTL: std::time::Duration = std::time::Duration::from_secs(30);
+    static CACHE: OnceLock<Mutex<(Option<Instant>, Vec<PathBuf>)>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new((None, Vec::new())));
+    let mut guard = match cache.lock() {
+        Ok(g) => g,
+        Err(_) => return Vec::new(),
+    };
+    let stale = guard.0.map_or(true, |t| t.elapsed() >= TTL);
+    if stale {
+        for h in discover_running_homes() {
+            if !guard.1.contains(&h) {
+                guard.1.push(h);
+            }
+        }
+        guard.0 = Some(Instant::now());
+    }
+    guard.1.clone()
 }
 
 /// 归一化用户填写的路径, 三种写法都接受:
@@ -144,13 +304,24 @@ pub fn resolve_dbs(home: &Path) -> Vec<PathBuf> {
 /// 当前生效的 Hermes 配置(设置页改动后下一次轮询即生效)。
 #[derive(Debug, Clone, Default)]
 pub struct Config {
-    pub home: Option<PathBuf>,
+    /// 本次参与扫描的 home(可能多个: 默认 home + 自动识别到的免安装目录)
+    pub homes: Vec<PathBuf>,
     pub dbs: Vec<PathBuf>,
     pub error: Option<String>,
 }
 
 /// 读设置 + 定位实际存在的库。
+///
+/// 优先级:
+/// 1. 设置页显式指定的目录(唯一权威, 不再猜);
+/// 2. `HERMES_HOME` 环境变量(Hermes 自己解析 home 的第一优先级);
+/// 3. 平台默认 home + 从运行中的 Hermes 进程反推出来的免安装目录(两者合并)。
 pub fn load_config(conn: &Connection) -> Config {
+    build_config(conn, discovered_homes_cached())
+}
+
+/// [`load_config`] 的纯逻辑部分(discovered 由调用方注入, 便于测试)。
+fn build_config(conn: &Connection, discovered: Vec<PathBuf>) -> Config {
     let explicit = conn
         .query_row(
             "SELECT value FROM kv_settings WHERE key = ?1",
@@ -161,43 +332,69 @@ pub fn load_config(conn: &Connection) -> Config {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let home = explicit
-        .map(|s| normalise_home(&s))
-        .or_else(resolve_home);
-
-    match home {
-        Some(h) => {
-            let dbs = resolve_dbs(&h);
-            let error = if dbs.is_empty() {
-                Some(format!("{} 下没有找到 state.db", h.display()))
-            } else {
-                None
-            };
-            Config { home: Some(h), dbs, error }
+    let homes: Vec<PathBuf> = if let Some(raw) = explicit {
+        vec![normalise_home(&raw)]
+    } else if let Some(env) = env_home() {
+        vec![env]
+    } else {
+        let default = platform_default_home();
+        let mut v: Vec<PathBuf> = Vec::new();
+        if let Some(d) = default.clone() {
+            v.push(d);
         }
-        None => Config {
-            home: None,
-            dbs: Vec::new(),
-            error: Some("未定位到 Hermes 数据目录".into()),
-        },
+        for h in discovered {
+            if !v.contains(&h) {
+                v.push(h);
+            }
+        }
+        // 静态默认目录里没有库时, 别让它挡住自动识别出来的目录
+        let with_db: Vec<PathBuf> = v.iter().filter(|h| !resolve_dbs(h).is_empty()).cloned().collect();
+        if with_db.is_empty() {
+            // 一个都没找到: 保留默认路径, 至少能给用户一个明确的提示
+            default.into_iter().collect()
+        } else {
+            with_db
+        }
+    };
+
+    let mut dbs: Vec<PathBuf> = Vec::new();
+    for h in &homes {
+        dbs.extend(resolve_dbs(h));
     }
+    dbs.sort();
+    dbs.dedup();
+
+    let error = if dbs.is_empty() {
+        let where_ = homes
+            .iter()
+            .map(|h| h.display().to_string())
+            .collect::<Vec<_>>()
+            .join("、");
+        Some(format!("{where_} 下没有找到 state.db"))
+    } else {
+        None
+    };
+
+    Config { homes, dbs, error }
 }
 
 /// 组装给前端的状态信息。
 pub fn info_from(cfg: &Config, started: bool) -> WatcherInfo {
+    let homes = cfg
+        .homes
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join("、");
     WatcherInfo {
-        hermes_home: cfg
-            .home
-            .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default(),
+        hermes_home: homes,
         state_db: cfg
             .dbs
             .first()
             .map(|p| p.display().to_string())
             .or_else(|| {
-                cfg.home
-                    .as_ref()
+                cfg.homes
+                    .first()
                     .map(|p| p.join("state.db").display().to_string())
             })
             .unwrap_or_default(),
@@ -660,7 +857,7 @@ pub fn start_watcher(
         .name("hermes-watcher".into())
         .spawn(move || {
             let mut stamps: HashMap<PathBuf, FileStamp> = HashMap::new();
-            let mut cur_home: Option<PathBuf> = None;
+            let mut cur_homes: Vec<PathBuf> = Vec::new();
             while !stop.load(Ordering::Relaxed) {
                 // 只在这个短临界区里读设置/定位库, 不在持锁期间解析 Hermes 库
                 let cfg = match conn.lock() {
@@ -668,10 +865,10 @@ pub fn start_watcher(
                     Err(_) => Config::default(),
                 };
 
-                if cfg.home != cur_home {
-                    // 数据目录变了(设置页改动或首次定位): 旧指纹作废, 重新全量核对
+                if cfg.homes != cur_homes {
+                    // 数据目录变了(设置页改动或新识别到免安装目录): 旧指纹作废, 重新全量核对
                     stamps.clear();
-                    cur_home = cfg.home.clone();
+                    cur_homes = cfg.homes.clone();
                 }
 
                 let changed: Vec<PathBuf> = cfg
@@ -1182,7 +1379,7 @@ mod tests {
         set_hermes_home(&conn, &home.display().to_string());
 
         let cfg = load_config(&conn);
-        assert_eq!(cfg.home.as_deref(), Some(home.as_path()));
+        assert_eq!(cfg.homes, vec![home.clone()]);
         assert_eq!(cfg.dbs, vec![home.join("state.db")]);
         assert!(cfg.error.is_none(), "{:?}", cfg.error);
 
@@ -1201,9 +1398,74 @@ mod tests {
         set_hermes_home(&conn, &root.display().to_string());
 
         let cfg = load_config(&conn);
-        assert_eq!(cfg.home.as_deref(), Some(home.as_path()));
+        assert_eq!(cfg.homes, vec![home.clone()]);
         assert_eq!(cfg.dbs.len(), 1);
         assert!(cfg.error.is_none());
+    }
+
+    #[test]
+    fn home_from_exe_walks_up_to_portable_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Hermes Portable");
+        let home = root.join("data").join("hermes-home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("state.db"), b"x").unwrap();
+
+        // 桌面主程序: <root>\Hermes Agent.exe
+        let desktop = root.join("Hermes Agent CN Desktop.exe");
+        std::fs::write(&desktop, b"x").unwrap();
+        assert_eq!(home_from_exe(&desktop), Some(home.clone()));
+
+        // 运行时子进程: <root>\data\versions\0.19.0\hermes-agent-runtime.exe (上溯 3 级)
+        let runtime_dir = root.join("data").join("versions").join("0.19.0-cn.7");
+        std::fs::create_dir_all(&runtime_dir).unwrap();
+        let runtime = runtime_dir.join("hermes-agent-cn-runtime.exe");
+        std::fs::write(&runtime, b"x").unwrap();
+        assert_eq!(home_from_exe(&runtime), Some(home.clone()));
+
+        // 无关进程/无 state.db → None
+        let other = dir.path().join("NotHermes.exe");
+        std::fs::write(&other, b"x").unwrap();
+        assert_eq!(home_from_exe(&other), None);
+    }
+
+    #[test]
+    fn discovered_portable_home_is_merged_with_default() {
+        let (dir, conn) = open_test_db();
+        let root = dir.path().join("Hermes Portable");
+        let home = root.join("data").join("hermes-home");
+        std::fs::create_dir_all(&home).unwrap();
+        make_smu_db(&home.join("state.db"), &[sample()]);
+
+        // 未显式设置 + 无 HERMES_HOME: 走"平台默认 + 进程识别"合并
+        assert!(std::env::var("HERMES_HOME").is_err(), "测试环境不应设置 HERMES_HOME");
+        set_hermes_home(&conn, "");
+        let cfg = build_config(&conn, vec![home.clone()]);
+        assert_eq!(cfg.dbs, vec![home.join("state.db")], "应识别出免安装目录");
+        assert!(cfg.homes.contains(&home));
+
+        assert_eq!(scan_once(&conn, &cfg.dbs).unwrap(), 1);
+        assert_eq!(count_hermes(&conn), 1);
+        // 自动识别到的目录也会显示在前端状态里
+        let info = info_from(&cfg, true);
+        assert!(info.state_db.ends_with("state.db"));
+        assert!(info.hermes_home.contains("Hermes Portable"));
+    }
+
+    #[test]
+    fn discovered_home_is_ignored_when_setting_is_explicit() {
+        let (dir, conn) = open_test_db();
+        let explicit = dir.path().join("explicit-home");
+        std::fs::create_dir_all(&explicit).unwrap();
+        make_smu_db(&explicit.join("state.db"), &[sample()]);
+        let other = dir.path().join("other-home");
+        std::fs::create_dir_all(other.join("data").join("hermes-home")).unwrap();
+        make_smu_db(&other.join("data").join("hermes-home").join("state.db"), &[sample()]);
+
+        set_hermes_home(&conn, &explicit.display().to_string());
+        let cfg = build_config(&conn, vec![other.join("data").join("hermes-home")]);
+        assert_eq!(cfg.homes, vec![explicit.clone()], "显式设置优先, 不再猜");
+        assert_eq!(cfg.dbs, vec![explicit.join("state.db")]);
     }
 
     #[test]
@@ -1232,16 +1494,21 @@ mod tests {
         if cfg.dbs.is_empty() {
             eprintln!(
                 "[hermes-e2e] skip: {} 下没有 state.db",
-                cfg.home
-                    .as_ref()
+                cfg.homes
+                    .iter()
                     .map(|h| h.display().to_string())
-                    .unwrap_or_else(|| "(未定位到 home)".into())
+                    .collect::<Vec<_>>()
+                    .join("、")
             );
             return;
         }
         eprintln!(
             "[hermes-e2e] home={} 库={}",
-            cfg.home.as_ref().unwrap().display(),
+            cfg.homes
+                .iter()
+                .map(|h| h.display().to_string())
+                .collect::<Vec<_>>()
+                .join("、"),
             cfg.dbs.len()
         );
         let n = scan_once(&conn, &cfg.dbs).unwrap();
@@ -1257,5 +1524,18 @@ mod tests {
         eprintln!("[hermes-e2e] 首次扫描新增={n}");
         eprintln!("[hermes-e2e] 记录={calls} 输入={p} 输出={c} 缓存={ca} 费用=${cost:.4}");
         assert_eq!(scan_once(&conn, &cfg.dbs).unwrap(), 0, "第二轮不应新增");
+    }
+
+    /// 进程识别(手动触发): 打印从"正在运行的 Hermes 进程"反推出来的数据目录。
+    /// 运行: cargo test --lib discover_running_homes_real -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn discover_running_homes_real() {
+        let homes = discover_running_homes();
+        eprintln!("[hermes-discover] 进程路径数={}", process_image_paths().len());
+        eprintln!("[hermes-discover] 识别到 {} 个 home: {:#?}", homes.len(), homes);
+        for h in &homes {
+            eprintln!("[hermes-discover] {} -> dbs={:?}", h.display(), resolve_dbs(h));
+        }
     }
 }

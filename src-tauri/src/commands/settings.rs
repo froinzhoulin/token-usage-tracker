@@ -11,7 +11,7 @@ pub struct SettingsView {
     pub usd_cny_rate: f64,
     /// 透明代理上游地址(如 https://api.deepseek.com)
     pub collector_upstream: String,
-    /// Hermes Agent 数据目录(留空 = 自动探测; 免安装版需手动指定)
+    /// Hermes Agent 数据目录(留空 = 自动探测, 含运行中的免安装版)
     #[serde(default)]
     pub hermes_home: String,
 }

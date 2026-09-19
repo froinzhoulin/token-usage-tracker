@@ -207,12 +207,12 @@ export default function SettingsPage() {
           </button>
         </div>
         <p className="muted" style={{ marginTop: 6 }}>
-          Hermes 的会话与用量存在 <code>state.db</code>（SQLite）。默认自动探测
-          <code>%LOCALAPPDATA%\hermes</code> / <code>~/.hermes</code>，并读取
-          <code>HERMES_HOME</code> 与各命名 profile；
-          <strong>免安装（portable）版</strong>的数据在安装目录里、无法自动探测，需要在这里指定 ——
-          填免安装根目录、<code>…\data\hermes-home</code> 或 <code>state.db</code> 文件路径都可以。
-          保存后无需重启，约 3 秒内自动生效。
+          Hermes 的会话与用量存在 <code>state.db</code>（SQLite）。自动探测顺序：
+          <code>HERMES_HOME</code> → <code>%LOCALAPPDATA%\hermes</code> / <code>~/.hermes</code>
+          （含各命名 profile）→ <strong>从正在运行的 Hermes 进程反推免安装目录</strong>。
+          免安装（portable）版在 Hermes 运行时会被自动识别；若希望 Hermes 没开时也持续检测，
+          在这里固化路径即可（填免安装根目录、<code>…\data\hermes-home</code> 或 <code>state.db</code> 都行）。
+          保存后无需重启、约 3 秒内生效；留空则恢复自动探测。
         </p>
         {hmInfo && (
           <p className={hmInfo.started && !hmInfo.error ? 'ok-text' : 'warn-text'}>

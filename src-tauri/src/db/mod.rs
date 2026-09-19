@@ -205,7 +205,7 @@ fn seed_settings(conn: &Connection) -> rusqlite::Result<()> {
         ("usd_cny_rate", "7.1"),
         ("collector_port", "8765"),
         ("collector_upstream", "https://api.deepseek.com"),
-        // 留空 = 自动探测默认 home; 免安装版需要在设置页指定
+        // 留空 = 自动探测(含运行中的免安装版); 也可固化指定目录
         ("hermes_home", ""),
     ];
     for (k, v) in defaults {

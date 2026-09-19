@@ -517,7 +517,9 @@ export default function Dashboard() {
               ) : vd.hmStatus?.started ? (
                 <>
                   {vd.hmStatus?.error ?? '未找到 state.db'}
-                  <span className="muted">（免安装版请在「设置 → Hermes Agent 数据目录」指定路径）</span>
+                  <span className="muted">
+                    （免安装版：先启动 Hermes 即会自动识别，或在「设置 → Hermes Agent 数据目录」固化路径）
+                  </span>
                 </>
               ) : (
                 <>未启动{vd.hmStatus?.error ? ` · ${vd.hmStatus.error}` : ''}</>
