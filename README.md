@@ -1,7 +1,7 @@
 # Token Usage Tracker
 
 > 本地运行的 LLM Token 用量统计与分析桌面工具。
-> 自动检测 DeepSeek Harness / Claude Code / Codex / WorkBuddy 用量 · 本地透明代理采集 · 数据 100% 存本机，不上传任何东西。
+> 自动检测 DeepSeek Harness / Claude Code / Codex / WorkBuddy / Hermes Agent 用量 · 本地透明代理采集 · 数据 100% 存本机，不上传任何东西。
 
 ![Tauri 2](https://img.shields.io/badge/Tauri-2.x-24C8D8?logo=tauri&logoColor=white)
 ![React 18](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
@@ -13,12 +13,13 @@ LLM 用量分散在多次会话、多个客户端里，说不清**花了多少�
 
 ## 功能特性
 
-**数据采集（六条通道，可叠加使用）**
+**数据采集（七条通道，可叠加使用）**
 
 - 🔍 **DSH 自动检测**（零配置）：应用启动后自动读取 DeepSeek Harness 的会话用量快照，每 3 秒增量入库，模型/厂商/会话/缓存自动识别，重启不重复计数
 - 🤖 **Claude Code 自动检测**（零配置）：增量读取 `~/.claude/projects/**/*.jsonl` 中 assistant 行的 `usage`，按 `message.id` 去重，每 3 秒轮询，重启不重复计数
 - 🧠 **Codex 自动检测**（零配置）：增量读取 `~/.codex/sessions/**/rollout-*.jsonl` 中的 `token_count` 事件，按累计值增长识别新调用并跳过重复上报，模型/推理 token/缓存自动识别
 - 🛠 **WorkBuddy 自动检测**（零配置）：增量读取 `~/.workbuddy/projects/**/*.jsonl` 中 `providerData.rawUsage`，按 `messageId` 去重，模型/推理 token/缓存自动识别
+- ☤ **Hermes Agent 自动检测**（零配置）：直接读取 Hermes 的 SQLite 库（`%LOCALAPPDATA%\hermes\state.db`，含 `profiles/*`），按会话/模型/厂商的累计计数**取增量**入库，重启不重复计数，应用未运行期间的用量下次扫描补齐
 - 🔁 **本地透明代理**：把任意 OpenAI 兼容客户端的 `base_url` 改成本机地址即可，自动转发 + 自动解析（流式/非流式）响应里的 usage；API Key 只透传、不读取、不落盘
 - 📮 **HTTP 上报端点**：`POST /api/v1/usage`，供脚本/程序随时上报；另有手动表单录入兜底
 - ✅ 按 `request_id` 去重，同一调用永远不会被统计两次
@@ -26,7 +27,7 @@ LLM 用量分散在多次会话、多个客户端里，说不清**花了多少�
 **统计与成本**
 
 - 📊 看板：来源（软件）标签筛选 · 今日 24 小时柱状图 / 按日 Token+费用双轴趋势 / 模型用量排行 / 按软件拆分 / 最近检测实时流，5 秒自动刷新
-- 🧩 **来源标签筛选**：一键在 DSH / Claude Code / Codex / WorkBuddy / 本地代理 / HTTP 上报之间切换，所有面板联动；标签栏始终列出全部软件（当前时间段无数据的软件会弱化显示，不会消失）
+- 🧩 **来源标签筛选**：一键在 DSH / Claude Code / Codex / WorkBuddy / Hermes Agent / 本地代理 / HTTP 上报之间切换，所有面板联动；标签栏始终列出全部软件（当前时间段无数据的软件会弱化显示，不会消失）
 - 💰 内置价格库（DeepSeek / OpenAI / Anthropic / Kimi，USD per 百万 Token），支持自定义单价覆盖与模型别名映射（如 `deepseek-chat` → `deepseek-v4-flash`）
 - 🏷 费用优先级：官方账单金额 > 单价自动换算（明细中标注「估算」）；展示币种 CNY / USD 可切换（手动汇率）
 - 📋 明细：分页 / 多条件筛选 / 行内编辑 / 删除；导出 CSV（UTF-8 BOM，Excel 友好）/ JSON；数据库一键备份与恢复
@@ -69,7 +70,26 @@ LLM 用量分散在多次会话、多个客户端里，说不清**花了多少�
 - **按 `messageId` 去重**：每次调用唯一。注意 `traceId` 会被同一轮的多次调用共用，不能当去重键
 - **时间为毫秒 epoch**，入库前转为 ISO8601；`sessionId` 与 `cwd` 直接从行内取
 
-### 5) 本地透明代理
+### 5) Hermes Agent 自动检测（零配置）
+
+本机存在 Hermes home 时自动开始。Hermes 用 SQLite 持久化会话与用量，库文件为：
+
+- Windows：`%LOCALAPPDATA%\hermes\state.db`
+- macOS / Linux：`~/.hermes/state.db`
+- 命名 profile 各有一份：`<hermes home>/profiles/<name>/state.db`（会一并扫描）
+- 可用 `HERMES_HOME` 环境变量覆盖 home
+
+要点：
+
+- **只读打开**：本工具只对 Hermes 库执行 SELECT，绝不写入
+- **取增量而非逐次调用**：Hermes 存的是按 `(会话, 模型, 厂商)` 聚合的累计计数（新版本 `session_model_usage` 表；旧版本退回 `sessions` 会话总量），因此检测器用本地 `source_cursor` 水位线保存"上次已入库的累计值"，每次只入库差额；水位线在应用库里，**重启不会重复计数**
+- **口径**：Hermes 的五个计数是并列相加的桶（`input_tokens` 不含缓存，`reasoning_tokens` 独立于 `output_tokens`）——
+  `prompt = input + cache_read + cache_write`、`completion = output + reasoning`、`cached = cache_read`；推理 token 数记入备注
+- **时间戳**：取 Hermes 的 `last_seen`（回退 `started_at`/`ended_at`），首次运行补录历史会话时也会落到各自的真实时间，不会把历史用量堆进"今天"
+- **费用**：单价库里有该模型价格时按本应用单价估算（与其它通道口径一致）；没有时回退 Hermes 自报的 `actual_cost_usd`（标 official）/ `estimated_cost_usd`（标 computed）
+- 有 `session_model_usage` 行的会话不会再被会话总量兜底重复计入
+
+### 6) 本地透明代理
 
 在你的程序里只改一行 API 地址（模型名和 Key 保持不变）：
 
@@ -83,7 +103,7 @@ client = OpenAI(
 - 流式请求自动注入 `stream_options.include_usage=true`，打字机体验不受影响
 - 上游地址可在设置页更换（Kimi / 智谱 / 通义等任何 OpenAI 兼容服务）
 
-### 6) HTTP 上报端点
+### 7) HTTP 上报端点
 
 ```bash
 curl -X POST http://127.0.0.1:8765/api/v1/usage \
@@ -99,8 +119,8 @@ curl -X POST http://127.0.0.1:8765/api/v1/usage \
 
 系统要求：Windows 10/11（含 WebView2 运行时）。
 
-1. 下载安装包 `Token Usage Tracker_0.3.0_x64-setup.exe`（或直接运行绿色版 `token-usage-tracker.exe`）
-2. 打开应用即可——本机存在 `~/.dsh`、`~/.claude/projects`、`~/.codex/sessions` 或 `~/.workbuddy/projects` 时自动检测即刻生效，到「看板」页等待数据点亮
+1. 下载安装包 `Token Usage Tracker_0.4.0_x64-setup.exe`（或直接运行绿色版 `token-usage-tracker.exe`）
+2. 打开应用即可——本机存在 `~/.dsh`、`~/.claude/projects`、`~/.codex/sessions`、`~/.workbuddy/projects` 或 Hermes home 时自动检测即刻生效，到「看板」页等待数据点亮
 
 ### 从源码构建
 
@@ -118,9 +138,10 @@ npm run tauri build    # 产出安装包
 
 ```bash
 cd src-tauri
-cargo test --lib                                                        # 44 项单元测试
+cargo test --lib                                                        # 54 项单元测试
 cargo test --lib scan_real_codex_home -- --ignored --nocapture           # 用真实 ~/.codex 数据端到端核对(临时库, 不碰应用库)
 cargo test --lib scan_real_workbuddy_home -- --ignored --nocapture       # 同上, 针对 ~/.workbuddy
+cargo test --lib scan_real_hermes_home -- --ignored --nocapture          # 同上, 针对 Hermes state.db(主库 + profiles)
 cargo test --test integration                                           # 导入-统计-导出全链路
 cargo test --release --test integration perf_100k -- --ignored --nocapture   # 10 万行性能验收
 ```
@@ -136,13 +157,14 @@ token-usage-tracker/
 ├─ src-tauri/
 │  ├─ src/commands/         # IPC 命令薄壳
 │  ├─ src/domain/           # 业务规则（记录/价格/统计/导入导出）
-│  ├─ src/db/               # SQLite 连接与增量迁移
+│  ├─ src/db/               # SQLite 连接与增量迁移(含 source_cursor 水位线表)
 │  ├─ src/collector.rs      # 127.0.0.1 HTTP 收集端点
 │  ├─ src/proxy.rs          # OpenAI 兼容透明代理
 │  ├─ src/dsh_watcher.rs    # DSH 快照水位线检测
 │  ├─ src/claude_code_watcher.rs  # Claude Code jsonl 增量检测
 │  ├─ src/codex_watcher.rs  # Codex rollout token_count 增量检测
 │  ├─ src/workbuddy_watcher.rs  # WorkBuddy rawUsage 增量检测
+│  ├─ src/hermes_watcher.rs # Hermes Agent state.db 累计计数取增量
 │  └─ tests/integration.rs  # 端到端集成测试
 └─ scripts/                 # 图标生成等辅助脚本
 ```
@@ -160,10 +182,22 @@ token-usage-tracker/
 - Claude Code 的 jsonl 格式若随版本变化，解析逻辑需同步更新；该文件不含厂商字段，故 Claude Code 记录的厂商留空（需在设置页按模型名自定义单价才能估算费用）
 - Codex 的 rollout 格式若随版本变化，解析逻辑需同步更新；其 `total_token_usage` 在会话恢复时会继承上一会话，故只用于判断"累计值是否增长"，用量一律取 `last_token_usage`
 - WorkBuddy 的 jsonl 格式若随版本变化，解析逻辑需同步更新；其行内不含厂商字段，故 WorkBuddy 记录的厂商留空（需在设置页按模型名自定义单价才能估算费用）
+- Hermes Agent 的 `state.db` schema 若随版本变化，解析逻辑需同步更新；本工具按其当前 schema（`session_model_usage` 优先、`sessions` 兜底）读取，schema 漂移时会退化为更粗的会话总量而不是丢数据
+- Hermes 只提供累计计数，没有逐次调用明细，所以一条记录代表"两次扫描之间的增量"，`上报次数`不等于真实 API 调用次数（Hermes 的 `api_call_count` 未入库）
 - 应用未运行期间的多次调用，只能补记每会话最后一次（快照仅含最近一次调用的用量）
 - CSV 导入界面暂未开放（后端解析已实现并测试覆盖，计划在后续版本回归）
 
 ## 更新日志
+
+### v0.4.0
+
+- ☤ 新增 **Hermes Agent 自动检测**通道：只读读取 `state.db`（Windows `%LOCALAPPDATA%\hermes\state.db`，含 `profiles/*`，可用 `HERMES_HOME` 覆盖），按 `(会话, 模型, 厂商)` 的累计计数取增量入库，重启不重复计数
+- ✨ 引入通用 **`source_cursor` 水位线表**（数据迁移 v4）：为累计型数据源保存"上次已入库的累计值"，应用未运行期间的用量下次扫描自动补齐
+- ✨ 来源标签筛选扩展到 **7 个来源**（DSH / Claude Code / Codex / WorkBuddy / Hermes Agent / 本地代理 / HTTP 上报）
+- ✨ 看板「自动检测通道」面板新增 Hermes Agent 状态与库路径
+- 🔧 检测器每轮先读 Hermes 库、再短暂持应用库锁入库，避免大库拖慢其它通道写库
+- 🔧 Hermes 库文件指纹未变化时跳过查询，减少每 3 秒的空转
+- 🔧 清理 `proxy.rs` 测试中多余的 `mut`（编译零警告）
 
 ### v0.3.0
 

@@ -3,6 +3,7 @@ pub mod codex;
 pub mod collector_status;
 pub mod export;
 pub mod health;
+pub mod hermes;
 pub mod import_;
 pub mod price;
 pub mod records;

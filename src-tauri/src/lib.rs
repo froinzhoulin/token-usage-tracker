@@ -5,6 +5,7 @@ pub mod commands;
 pub mod db;
 pub mod domain;
 pub mod dsh_watcher;
+pub mod hermes_watcher;
 pub mod proxy;
 pub mod workbuddy_watcher;
 
@@ -221,6 +222,43 @@ pub fn run() {
                 app.manage(WorkBuddyWatcherInfo(Arc::new(Mutex::new(Some(wb_info)))));
             }
 
+            // 启动 Hermes Agent 本机用量自动检测(读取 state.db 的累计用量, 水位线取增量)
+            {
+                let mut hm_info = hermes_watcher::WatcherInfo {
+                    hermes_home: String::new(),
+                    state_db: String::new(),
+                    started: false,
+                    error: None,
+                };
+                match hermes_watcher::resolve_home() {
+                    Some(home) => {
+                        hm_info.hermes_home = home.display().to_string();
+                        hm_info.state_db = home.join("state.db").display().to_string();
+                        if home.is_dir() {
+                            let stop = Arc::new(AtomicBool::new(false));
+                            let conn = db.shared();
+                            match hermes_watcher::start_watcher(
+                                conn,
+                                home,
+                                hermes_watcher::DEFAULT_POLL_MS,
+                                Arc::clone(&stop),
+                            ) {
+                                Ok(()) => {
+                                    hm_info.started = true;
+                                    app.manage(HermesWatcherState { stop });
+                                }
+                                Err(e) => hm_info.error = Some(e),
+                            }
+                        } else {
+                            // 本机还没跑过 Hermes: home 目录尚未创建, 先不启动检测
+                            hm_info.error = Some(format!("未找到 {} 目录", home.display()));
+                        }
+                    }
+                    None => hm_info.error = Some("未定位到 Hermes 数据目录".into()),
+                }
+                app.manage(HermesWatcherInfo(Arc::new(Mutex::new(Some(hm_info)))));
+            }
+
             app.manage(db);
 
             Ok(())
@@ -252,6 +290,7 @@ pub fn run() {
             commands::claude_code::claude_code_status,
             commands::codex::codex_status,
             commands::workbuddy::workbuddy_status,
+            commands::hermes::hermes_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -321,3 +360,17 @@ impl Drop for WorkBuddyWatcherState {
 
 /// WorkBuddy watcher 启动信息(供前端展示)
 pub struct WorkBuddyWatcherInfo(pub Arc<Mutex<Option<workbuddy_watcher::WatcherInfo>>>);
+
+/// Hermes Agent watcher 运行状态(managed state)
+pub struct HermesWatcherState {
+    pub stop: Arc<AtomicBool>,
+}
+
+impl Drop for HermesWatcherState {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Hermes Agent watcher 启动信息(供前端展示)
+pub struct HermesWatcherInfo(pub Arc<Mutex<Option<hermes_watcher::WatcherInfo>>>);

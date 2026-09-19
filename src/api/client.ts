@@ -19,7 +19,7 @@ export interface HealthInfo {
 export interface RecordFilter {
   from?: string
   to?: string
-  /** 采集来源(软件): dsh | claude_code | proxy | collector | manual */
+  /** 采集来源(软件): dsh | claude_code | codex | workbuddy | hermes | proxy | collector | manual */
   source?: string
   provider_code?: string
   model_name?: string
@@ -196,7 +196,7 @@ async function call<R>(cmd: string, args: unknown, mock: () => R): Promise<R> {
 
 export const getHealth = (): Promise<HealthInfo> =>
   call('health', {}, () => ({
-    app_version: '0.3.0 (browser preview)',
+    app_version: '0.4.0 (browser preview)',
     db_path: null,
     db_ready: false,
     db_version: 0,
@@ -235,6 +235,22 @@ export interface WorkBuddyWatcherInfo {
   started: boolean
   error: string | null
 }
+
+export interface HermesWatcherInfo {
+  hermes_home: string
+  /** 主库路径(多 profile 时还会扫描 profiles/<name>/state.db) */
+  state_db: string
+  started: boolean
+  error: string | null
+}
+
+export const hermesStatus = (): Promise<HermesWatcherInfo> =>
+  call('hermes_status', {}, () => ({
+    hermes_home: '',
+    state_db: '',
+    started: false,
+    error: 'Browser preview: Tauri backend not connected',
+  }))
 
 export const workbuddyStatus = (): Promise<WorkBuddyWatcherInfo> =>
   call('workbuddy_status', {}, () => ({

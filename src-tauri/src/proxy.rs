@@ -458,7 +458,7 @@ data: [DONE]
         let fake = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let fake_port = fake.server_addr().to_ip().unwrap().port();
         std::thread::spawn(move || loop {
-            let Ok(mut req) = fake.recv() else { break };
+            let Ok(req) = fake.recv() else { break };
             let response = tiny_http::Response::from_string(
                 r#"{"id":"fake-1","model":"deepseek-chat","choices":[{"index":0}],
                     "usage":{"prompt_tokens":222,"completion_tokens":33,

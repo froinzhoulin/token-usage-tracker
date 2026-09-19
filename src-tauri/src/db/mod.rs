@@ -36,7 +36,7 @@ pub fn open(path: &std::path::Path) -> rusqlite::Result<Connection> {
 }
 
 /// 当前 schema 版本。每次结构变更 +1，并在 migrate 中追加增量脚本。
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 
 /// 执行增量迁移并 seed 内置价格库。返回迁移后的版本号。
 pub fn migrate(conn: &Connection) -> rusqlite::Result<u32> {
@@ -159,6 +159,32 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<u32> {
                 AND provider_code IS NOT NULL
                 AND provider_code = model_name",
             [],
+        )?;
+    }
+
+    if current < 4 {
+        // 累计型来源(如 Hermes Agent)的水位线。
+        //
+        // 这类软件存的是"按 (会话,模型,厂商) 聚合的累计计数", 没有逐次调用明细,
+        // 靠文件偏移量无法增量读取。这里记住每个分组上一次已入库的累计值,
+        // 下次扫描只入库差额 —— 水位线落在应用库里, 所以应用重启后依然
+        // 不会重复计数; 应用未运行期间的用量会在下次扫描时一次性补齐。
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS source_cursor (
+                source             TEXT NOT NULL,          -- 检测通道, 如 hermes
+                scope              TEXT NOT NULL,          -- 数据源实例(如具体 state.db 路径)
+                group_key          TEXT NOT NULL,          -- 会话|模型|厂商
+                input_tokens       INTEGER NOT NULL DEFAULT 0,
+                output_tokens      INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+                cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                reasoning_tokens   INTEGER NOT NULL DEFAULT 0,
+                cost_usd           REAL    NOT NULL DEFAULT 0,
+                updated_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (source, scope, group_key)
+            );
+            "#,
         )?;
     }
 

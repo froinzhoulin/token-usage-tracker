@@ -8,6 +8,7 @@ import {
   getDashboard,
   getHourlyTrend,
   getSettings,
+  hermesStatus,
   listRecords,
   workbuddyStatus,
   type ClaudeCodeWatcherInfo,
@@ -15,6 +16,7 @@ import {
   type CollectorStatusInfo,
   type DashboardData,
   type DistBucket,
+  type HermesWatcherInfo,
   type HourTrendPoint,
   type RecordFilter,
   type UsageRecord,
@@ -47,11 +49,23 @@ const SOURCE_LABELS: Record<string, string> = {
   claude_code: 'Claude Code',
   codex: 'Codex',
   workbuddy: 'WorkBuddy',
+  hermes: 'Hermes Agent',
   proxy: '本地代理',
   collector: 'HTTP 上报',
   manual: '手动录入',
 }
 const sourceLabel = (s: string): string => SOURCE_LABELS[s] ?? s
+
+/** 实时流里的短标签(表格列窄) */
+const SOURCE_SHORT: Record<string, string> = {
+  dsh: 'DSH',
+  claude_code: 'Claude',
+  codex: 'Codex',
+  workbuddy: 'WorkBuddy',
+  hermes: 'Hermes',
+  collector: '检测',
+}
+const sourceShort = (s: string): string => SOURCE_SHORT[s] ?? s
 
 interface ViewData {
   dash: DashboardData
@@ -61,6 +75,7 @@ interface ViewData {
   ccStatus: ClaudeCodeWatcherInfo | null
   cxStatus: CodexWatcherInfo | null
   wbStatus: WorkBuddyWatcherInfo | null
+  hmStatus: HermesWatcherInfo | null
   /** 各来源(软件)用量; 后端忽略 source 自身筛选, 便于标签栏始终显示各家对比 */
   sources: DistBucket[]
 }
@@ -104,7 +119,7 @@ export default function Dashboard() {
     // "最近检测到" 是活动流: 只按来源过滤, 不受日期范围限制(保留原行为)
     const recentFilter: RecordFilter = sourceRef.current ? { source: sourceRef.current } : {}
     try {
-      const [dash, hourly, rc, st, ccSt, cxSt, wbSt] = await Promise.all([
+      const [dash, hourly, rc, st, ccSt, cxSt, wbSt, hmSt] = await Promise.all([
         getDashboard(f),
         getHourlyTrend(f),
         listRecords(recentFilter, 0, 15),
@@ -112,6 +127,7 @@ export default function Dashboard() {
         claudeCodeStatus(),
         codexStatus(),
         workbuddyStatus(),
+        hermesStatus(),
       ])
       setVd({
         dash,
@@ -121,6 +137,7 @@ export default function Dashboard() {
         ccStatus: ccSt,
         cxStatus: cxSt,
         wbStatus: wbSt,
+        hmStatus: hmSt,
         sources: dash.by_source ?? [],
       })
       setError(null)
@@ -229,6 +246,7 @@ export default function Dashboard() {
     vd?.ccStatus?.started ? 'Claude Code' : null,
     vd?.cxStatus?.started ? 'Codex' : null,
     vd?.wbStatus?.started ? 'WorkBuddy' : null,
+    vd?.hmStatus?.started ? 'Hermes Agent' : null,
   ].filter((x): x is string => x !== null)
 
   return (
@@ -440,13 +458,7 @@ export default function Dashboard() {
                       <td className="num">{displayCost(r.cost_usd, cc)}</td>
                       <td>
                         <span className={`tag ${r.source === 'dsh' ? 'tag-project' : ''}`}>
-                          {r.source === 'dsh'
-                            ? 'DSH'
-                            : r.source === 'claude_code'
-                              ? 'Claude'
-                              : r.source === 'collector'
-                                ? '检测'
-                                : r.source}
+                          {sourceShort(r.source)}
                         </span>
                         {r.cost_source === 'computed' && <span className="tag">估算</span>}
                       </td>
@@ -491,6 +503,17 @@ export default function Dashboard() {
                 </>
               ) : (
                 <>未启动{vd.wbStatus?.error ? ` · ${vd.wbStatus.error}` : ''}</>
+              )}
+            </p>
+            <p className={vd.hmStatus?.started ? 'ok-text' : 'warn-text'}>
+              {vd.hmStatus?.started ? '✓' : '✗'} <strong>Hermes Agent</strong>{' '}
+              {vd.hmStatus?.started ? (
+                <>
+                  运行中 · <code>{vd.hmStatus.state_db}</code>
+                  <span className="muted">（累计计数取增量，含 profiles/*）</span>
+                </>
+              ) : (
+                <>未启动{vd.hmStatus?.error ? ` · ${vd.hmStatus.error}` : ''}</>
               )}
             </p>
           </div>
