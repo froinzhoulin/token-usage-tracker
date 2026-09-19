@@ -86,6 +86,7 @@ export default function Dashboard() {
     display_currency: 'CNY',
     usd_cny_rate: 7.1,
     collector_upstream: 'https://api.deepseek.com',
+    hermes_home: '',
   })
   const [range, setRange] = useState('today')
   /** 采集来源筛选: '' = 全部软件 */
@@ -241,12 +242,13 @@ export default function Dashboard() {
   })()
 
   /** 正在运行的自动检测通道(可叠加) */
+  const hmReady = !!(vd?.hmStatus?.started && !vd?.hmStatus?.error)
   const activeChannels = [
     monitoring ? 'DSH' : null,
     vd?.ccStatus?.started ? 'Claude Code' : null,
     vd?.cxStatus?.started ? 'Codex' : null,
     vd?.wbStatus?.started ? 'WorkBuddy' : null,
-    vd?.hmStatus?.started ? 'Hermes Agent' : null,
+    hmReady ? 'Hermes Agent' : null,
   ].filter((x): x is string => x !== null)
 
   return (
@@ -505,12 +507,17 @@ export default function Dashboard() {
                 <>未启动{vd.wbStatus?.error ? ` · ${vd.wbStatus.error}` : ''}</>
               )}
             </p>
-            <p className={vd.hmStatus?.started ? 'ok-text' : 'warn-text'}>
-              {vd.hmStatus?.started ? '✓' : '✗'} <strong>Hermes Agent</strong>{' '}
-              {vd.hmStatus?.started ? (
+            <p className={hmReady ? 'ok-text' : 'warn-text'}>
+              {hmReady ? '✓' : '⚠'} <strong>Hermes Agent</strong>{' '}
+              {hmReady ? (
                 <>
-                  运行中 · <code>{vd.hmStatus.state_db}</code>
+                  运行中 · <code>{vd.hmStatus?.state_db}</code>
                   <span className="muted">（累计计数取增量，含 profiles/*）</span>
+                </>
+              ) : vd.hmStatus?.started ? (
+                <>
+                  {vd.hmStatus?.error ?? '未找到 state.db'}
+                  <span className="muted">（免安装版请在「设置 → Hermes Agent 数据目录」指定路径）</span>
                 </>
               ) : (
                 <>未启动{vd.hmStatus?.error ? ` · ${vd.hmStatus.error}` : ''}</>

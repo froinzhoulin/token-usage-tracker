@@ -150,6 +150,8 @@ export interface SettingsView {
   display_currency: string
   usd_cny_rate: number
   collector_upstream: string
+  /** Hermes Agent 数据目录; 留空 = 自动探测(免安装版需手动指定) */
+  hermes_home: string
 }
 
 export interface CsvPreview {
@@ -339,6 +341,7 @@ export const getSettings = (): Promise<SettingsView> =>
     display_currency: 'CNY',
     usd_cny_rate: 7.1,
     collector_upstream: 'https://api.deepseek.com',
+    hermes_home: '',
   }))
 
 export const setSettings = (s: SettingsView): Promise<void> =>
@@ -430,5 +433,14 @@ export async function pickOpenPath(
     directory: false,
     filters: [{ name: label, extensions }, { name: '所有文件', extensions: ['*'] }],
   })
+  return typeof picked === 'string' ? picked : null
+}
+
+/** 选择目录(如 Hermes 数据目录)。 */
+export async function pickDirectory(title = '选择目录'): Promise<string | null> {
+  if (!inTauri()) {
+    throw new Error('浏览器预览模式不支持选择本地文件，请运行 tauri dev')
+  }
+  const picked = await open({ multiple: false, directory: true, title })
   return typeof picked === 'string' ? picked : null
 }

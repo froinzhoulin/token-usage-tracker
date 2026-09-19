@@ -222,41 +222,20 @@ pub fn run() {
                 app.manage(WorkBuddyWatcherInfo(Arc::new(Mutex::new(Some(wb_info)))));
             }
 
-            // 启动 Hermes Agent 本机用量自动检测(读取 state.db 的累计用量, 水位线取增量)
+            // 启动 Hermes Agent 本机用量自动检测(读取 state.db 的累计用量, 水位线取增量)。
+            // 线程常驻并每轮重新读设置: 免安装版在设置页指定数据目录后无需重启即可生效。
             {
-                let mut hm_info = hermes_watcher::WatcherInfo {
-                    hermes_home: String::new(),
-                    state_db: String::new(),
-                    started: false,
-                    error: None,
+                let stop = Arc::new(AtomicBool::new(false));
+                let conn = db.shared();
+                let start_error = match hermes_watcher::start_watcher(
+                    conn,
+                    hermes_watcher::DEFAULT_POLL_MS,
+                    Arc::clone(&stop),
+                ) {
+                    Ok(()) => None,
+                    Err(e) => Some(e),
                 };
-                match hermes_watcher::resolve_home() {
-                    Some(home) => {
-                        hm_info.hermes_home = home.display().to_string();
-                        hm_info.state_db = home.join("state.db").display().to_string();
-                        if home.is_dir() {
-                            let stop = Arc::new(AtomicBool::new(false));
-                            let conn = db.shared();
-                            match hermes_watcher::start_watcher(
-                                conn,
-                                home,
-                                hermes_watcher::DEFAULT_POLL_MS,
-                                Arc::clone(&stop),
-                            ) {
-                                Ok(()) => {
-                                    hm_info.started = true;
-                                    app.manage(HermesWatcherState { stop });
-                                }
-                                Err(e) => hm_info.error = Some(e),
-                            }
-                        } else {
-                            // 本机还没跑过 Hermes: home 目录尚未创建, 先不启动检测
-                            hm_info.error = Some(format!("未找到 {} 目录", home.display()));
-                        }
-                    }
-                    None => hm_info.error = Some("未定位到 Hermes 数据目录".into()),
-                }
-                app.manage(HermesWatcherInfo(Arc::new(Mutex::new(Some(hm_info)))));
+                app.manage(HermesWatcherState { stop, start_error });
             }
 
             app.manage(db);
@@ -364,6 +343,8 @@ pub struct WorkBuddyWatcherInfo(pub Arc<Mutex<Option<workbuddy_watcher::WatcherI
 /// Hermes Agent watcher 运行状态(managed state)
 pub struct HermesWatcherState {
     pub stop: Arc<AtomicBool>,
+    /// 线程启动失败原因(None = 线程在跑)
+    pub start_error: Option<String>,
 }
 
 impl Drop for HermesWatcherState {
@@ -371,6 +352,3 @@ impl Drop for HermesWatcherState {
         self.stop.store(true, Ordering::Relaxed);
     }
 }
-
-/// Hermes Agent watcher 启动信息(供前端展示)
-pub struct HermesWatcherInfo(pub Arc<Mutex<Option<hermes_watcher::WatcherInfo>>>);

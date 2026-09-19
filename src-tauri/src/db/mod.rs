@@ -200,11 +200,13 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<u32> {
 
 /// 首次启动写入默认设置(幂等)。
 fn seed_settings(conn: &Connection) -> rusqlite::Result<()> {
-    let defaults: [(&str, &str); 4] = [
+    let defaults: [(&str, &str); 5] = [
         ("display_currency", "CNY"),
         ("usd_cny_rate", "7.1"),
         ("collector_port", "8765"),
         ("collector_upstream", "https://api.deepseek.com"),
+        // 留空 = 自动探测默认 home; 免安装版需要在设置页指定
+        ("hermes_home", ""),
     ];
     for (k, v) in defaults {
         conn.execute(

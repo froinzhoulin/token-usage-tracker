@@ -4,13 +4,16 @@ import {
   backupDb,
   exportData,
   getSettings,
+  hermesStatus,
   listPrices,
+  pickDirectory,
   pickOpenPath,
   pickSavePath,
   restoreDb,
   setSettings,
   upsertCustomPrice,
   writeTextFile,
+  type HermesWatcherInfo,
   type ModelPrice,
   type SettingsView,
 } from '../api/client'
@@ -21,8 +24,10 @@ export default function SettingsPage() {
     display_currency: 'CNY',
     usd_cny_rate: 7.1,
     collector_upstream: 'https://api.deepseek.com',
+    hermes_home: '',
   })
   const [prices, setPrices] = useState<ModelPrice[]>([])
+  const [hmInfo, setHmInfo] = useState<HermesWatcherInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [okMsg, setOkMsg] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -62,13 +67,26 @@ export default function SettingsPage() {
   useEffect(() => {
     getSettings().then(setSettingsState).catch((e) => flash(String(e), true))
     listPrices().then(setPrices).catch((e) => flash(String(e), true))
+    hermesStatus().then(setHmInfo).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function saveSettings() {
     try {
       await setSettings(settings)
+      // 保存后立刻回读生效状态: Hermes 检测器每轮都重新读设置, 无需重启
+      hermesStatus().then(setHmInfo).catch(() => {})
       flash('设置已保存')
+    } catch (e) {
+      flash(String(e), true)
+    }
+  }
+
+  async function browseHermesHome() {
+    try {
+      const dir = await pickDirectory('选择 Hermes 数据目录（含 state.db）')
+      if (!dir) return
+      setSettingsState((s) => ({ ...s, hermes_home: dir }))
     } catch (e) {
       flash(String(e), true)
     }
@@ -170,6 +188,39 @@ export default function SettingsPage() {
           OpenAI 兼容服务（DeepSeek 默认；换 Kimi/智谱/通义等把地址填成对应官方 API 即可，
           模型名用服务商要求的）。改动后重启应用生效。
         </p>
+      </div>
+
+      <div className="panel">
+        <h3>Hermes Agent 数据目录（可选）</h3>
+        <div className="row">
+          <input
+            className="wide-input"
+            value={settings.hermes_home}
+            onChange={(e) => setSettingsState({ ...settings, hermes_home: e.target.value })}
+            placeholder="留空 = 自动探测（%LOCALAPPDATA%\hermes 或 ~/.hermes）"
+          />
+          <button className="btn" onClick={browseHermesHome}>
+            浏览…
+          </button>
+          <button className="btn primary" onClick={saveSettings}>
+            保存设置
+          </button>
+        </div>
+        <p className="muted" style={{ marginTop: 6 }}>
+          Hermes 的会话与用量存在 <code>state.db</code>（SQLite）。默认自动探测
+          <code>%LOCALAPPDATA%\hermes</code> / <code>~/.hermes</code>，并读取
+          <code>HERMES_HOME</code> 与各命名 profile；
+          <strong>免安装（portable）版</strong>的数据在安装目录里、无法自动探测，需要在这里指定 ——
+          填免安装根目录、<code>…\data\hermes-home</code> 或 <code>state.db</code> 文件路径都可以。
+          保存后无需重启，约 3 秒内自动生效。
+        </p>
+        {hmInfo && (
+          <p className={hmInfo.started && !hmInfo.error ? 'ok-text' : 'warn-text'}>
+            {hmInfo.started && !hmInfo.error ? '✓' : '⚠'} 当前：
+            {hmInfo.state_db ? <code>{hmInfo.state_db}</code> : '未定位到 state.db'}
+            {hmInfo.error ? ` · ${hmInfo.error}` : ''}
+          </p>
+        )}
       </div>
 
       <div className="panel">

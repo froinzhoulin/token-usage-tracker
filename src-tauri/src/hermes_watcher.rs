@@ -5,6 +5,11 @@
 //!   - macOS / Linux 默认 `~/.hermes/state.db`
 //!   - 可用 `HERMES_HOME` 环境变量覆盖(命名 profile 是独立目录:
 //!     `<hermes home>/profiles/<name>/state.db`, 本检测器会一并扫描)
+//!   - **免安装(portable)版**把 home 放在安装目录下
+//!     (`<免安装根目录>\data\hermes-home`), 既没有注册表项也没有快捷方式线索,
+//!     无法自动探测 —— 这类安装请在设置页指定「Hermes 数据目录」
+//!     (kv_settings.hermes_home; 填免安装根目录、`...\data\hermes-home`
+//!     或 `state.db` 文件路径都可以, 见 [`normalise_home`])。
 //!
 //! ## 为什么是"水位线取增量"
 //!
@@ -54,11 +59,16 @@ use crate::domain::records::NewRecord;
 /// 默认轮询间隔(ms)
 pub const DEFAULT_POLL_MS: u64 = 3000;
 
+/// 设置页里"Hermes 数据目录"对应的 kv_settings 键。
+/// 留空 = 自动探测(见 [`resolve_home`]); 免安装版没有注册表/快捷方式线索,
+/// 需要用户显式指定(可直接填免安装根目录或 `state.db` 的路径)。
+pub const HOME_SETTING_KEY: &str = "hermes_home";
+
 /// 启动结果(供前端展示)。
 #[derive(Clone, serde::Serialize)]
 pub struct WatcherInfo {
     pub hermes_home: String,
-    /// 主库路径(多 profile 时还会有 profiles/*/state.db)
+    /// 主库路径(多 profile 时还会有 profiles/<name>/state.db)
     pub state_db: String,
     pub started: bool,
     pub error: Option<String>,
@@ -86,6 +96,31 @@ pub fn resolve_home() -> Option<PathBuf> {
         .map(|h| PathBuf::from(h).join(".hermes"))
 }
 
+/// 归一化用户填写的路径, 三种写法都接受:
+/// - `<home>\state.db`(直接指向库文件)→ 取所在目录
+/// - 免安装版根目录(含 `data\hermes-home`)→ 取 `data\hermes-home`
+/// - 普通 hermes home / 含 `hermes-home` 子目录 → 原样
+pub fn normalise_home(raw: &str) -> PathBuf {
+    let p = PathBuf::from(raw.trim());
+    if p.is_file() {
+        if let Some(parent) = p.parent() {
+            if parent.as_os_str().is_empty() {
+                return PathBuf::from(".");
+            }
+            return parent.to_path_buf();
+        }
+    }
+    let portable = p.join("data").join("hermes-home");
+    if portable.is_dir() {
+        return portable;
+    }
+    let nested = p.join("hermes-home");
+    if nested.is_dir() {
+        return nested;
+    }
+    p
+}
+
 /// 列出待扫描的 Hermes 库: 主库 + 各命名 profile 的库(只保留实际存在的文件)。
 pub fn resolve_dbs(home: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -104,6 +139,71 @@ pub fn resolve_dbs(home: &Path) -> Vec<PathBuf> {
         out.extend(extra);
     }
     out
+}
+
+/// 当前生效的 Hermes 配置(设置页改动后下一次轮询即生效)。
+#[derive(Debug, Clone, Default)]
+pub struct Config {
+    pub home: Option<PathBuf>,
+    pub dbs: Vec<PathBuf>,
+    pub error: Option<String>,
+}
+
+/// 读设置 + 定位实际存在的库。
+pub fn load_config(conn: &Connection) -> Config {
+    let explicit = conn
+        .query_row(
+            "SELECT value FROM kv_settings WHERE key = ?1",
+            [HOME_SETTING_KEY],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let home = explicit
+        .map(|s| normalise_home(&s))
+        .or_else(resolve_home);
+
+    match home {
+        Some(h) => {
+            let dbs = resolve_dbs(&h);
+            let error = if dbs.is_empty() {
+                Some(format!("{} 下没有找到 state.db", h.display()))
+            } else {
+                None
+            };
+            Config { home: Some(h), dbs, error }
+        }
+        None => Config {
+            home: None,
+            dbs: Vec::new(),
+            error: Some("未定位到 Hermes 数据目录".into()),
+        },
+    }
+}
+
+/// 组装给前端的状态信息。
+pub fn info_from(cfg: &Config, started: bool) -> WatcherInfo {
+    WatcherInfo {
+        hermes_home: cfg
+            .home
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default(),
+        state_db: cfg
+            .dbs
+            .first()
+            .map(|p| p.display().to_string())
+            .or_else(|| {
+                cfg.home
+                    .as_ref()
+                    .map(|p| p.join("state.db").display().to_string())
+            })
+            .unwrap_or_default(),
+        started,
+        error: cfg.error.clone(),
+    }
 }
 
 // ---------------- 读 Hermes 库 ----------------
@@ -547,9 +647,12 @@ fn stamp(db: &Path) -> FileStamp {
 }
 
 /// 启动后台检测线程(每 poll_ms 扫描一次)。
+///
+/// 线程常驻: 每轮都重新读设置并定位库, 所以
+/// - 设置页改了「Hermes 数据目录」→ 下一轮自动切换(无需重启);
+/// - 后建的 `state.db` / 新增 profile / 后来才启动的 Hermes 都能被发现。
 pub fn start_watcher(
     conn: Arc<Mutex<Connection>>,
-    home: PathBuf,
     poll_ms: u64,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
@@ -557,10 +660,22 @@ pub fn start_watcher(
         .name("hermes-watcher".into())
         .spawn(move || {
             let mut stamps: HashMap<PathBuf, FileStamp> = HashMap::new();
+            let mut cur_home: Option<PathBuf> = None;
             while !stop.load(Ordering::Relaxed) {
-                // 每轮重新定位: 新增 profile / 后建的 state.db 都能被发现
-                let dbs = resolve_dbs(&home);
-                let changed: Vec<PathBuf> = dbs
+                // 只在这个短临界区里读设置/定位库, 不在持锁期间解析 Hermes 库
+                let cfg = match conn.lock() {
+                    Ok(guard) => load_config(&guard),
+                    Err(_) => Config::default(),
+                };
+
+                if cfg.home != cur_home {
+                    // 数据目录变了(设置页改动或首次定位): 旧指纹作废, 重新全量核对
+                    stamps.clear();
+                    cur_home = cfg.home.clone();
+                }
+
+                let changed: Vec<PathBuf> = cfg
+                    .dbs
                     .into_iter()
                     .filter(|p| {
                         let s = stamp(p);
@@ -1021,22 +1136,115 @@ mod tests {
         assert!(resolve_dbs(&home).is_empty());
     }
 
+    #[test]
+    fn normalise_home_accepts_db_file_portable_root_and_plain_home() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // 免安装版根目录 → data\hermes-home
+        let root = dir.path().join("Hermes Portable");
+        let portable_home = root.join("data").join("hermes-home");
+        std::fs::create_dir_all(&portable_home).unwrap();
+        assert_eq!(normalise_home(&root.display().to_string()), portable_home);
+        assert_eq!(
+            normalise_home(&portable_home.display().to_string()),
+            portable_home,
+            "已经是 home 时原样返回"
+        );
+
+        // 直接指向 state.db → 取其所在目录
+        let db = portable_home.join("state.db");
+        std::fs::write(&db, b"x").unwrap();
+        assert_eq!(normalise_home(&db.display().to_string()), portable_home);
+
+        // 普通 home(无 data\hermes-home)→ 原样
+        let plain = dir.path().join("plain-home");
+        std::fs::create_dir_all(&plain).unwrap();
+        assert_eq!(normalise_home(&plain.display().to_string()), plain);
+    }
+
+    /// 写入设置(seed_settings 已插入 hermes_home='', 这里覆盖)
+    fn set_hermes_home(conn: &Connection, value: &str) {
+        conn.execute(
+            "INSERT INTO kv_settings(key, value) VALUES('hermes_home', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![value],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn setting_overrides_default_home_and_scans() {
+        let (dir, conn) = open_test_db();
+        let home = dir.path().join("hermes-home");
+        std::fs::create_dir_all(&home).unwrap();
+        make_smu_db(&home.join("state.db"), &[sample()]);
+
+        set_hermes_home(&conn, &home.display().to_string());
+
+        let cfg = load_config(&conn);
+        assert_eq!(cfg.home.as_deref(), Some(home.as_path()));
+        assert_eq!(cfg.dbs, vec![home.join("state.db")]);
+        assert!(cfg.error.is_none(), "{:?}", cfg.error);
+
+        assert_eq!(scan_once(&conn, &cfg.dbs).unwrap(), 1);
+        assert_eq!(count_hermes(&conn), 1);
+    }
+
+    #[test]
+    fn setting_pointing_at_portable_root_is_normalised() {
+        let (dir, conn) = open_test_db();
+        let root = dir.path().join("Hermes Agent CN Desktop Portable");
+        let home = root.join("data").join("hermes-home");
+        std::fs::create_dir_all(&home).unwrap();
+        make_smu_db(&home.join("state.db"), &[sample()]);
+
+        set_hermes_home(&conn, &root.display().to_string());
+
+        let cfg = load_config(&conn);
+        assert_eq!(cfg.home.as_deref(), Some(home.as_path()));
+        assert_eq!(cfg.dbs.len(), 1);
+        assert!(cfg.error.is_none());
+    }
+
+    #[test]
+    fn missing_db_reports_hint_but_thread_stays_up() {
+        let (dir, conn) = open_test_db();
+        let home = dir.path().join("empty-home");
+        std::fs::create_dir_all(&home).unwrap();
+        set_hermes_home(&conn, &home.display().to_string());
+
+        let cfg = load_config(&conn);
+        assert!(cfg.dbs.is_empty());
+        let info = info_from(&cfg, true);
+        assert!(info.started, "线程在跑");
+        assert!(info.error.unwrap().contains("state.db"), "应给出可操作的提示");
+        assert!(info.state_db.ends_with("state.db"), "仍展示预期路径");
+    }
+
     /// 端到端(手动触发): 扫描真实的 Hermes home 到临时库, 不触碰应用库。
     /// 运行: cargo test --lib scan_real_hermes_home -- --ignored --nocapture
+    /// 自定义目录: 先设 HERMES_HOME(或在下面 set_hermes_home)。
     #[test]
     #[ignore]
     fn scan_real_hermes_home() {
-        let home = match resolve_home() {
-            Some(h) => h,
-            None => return,
-        };
-        let dbs = resolve_dbs(&home);
-        if dbs.is_empty() {
-            eprintln!("[hermes-e2e] skip: {} 下没有 state.db", home.display());
+        let (_dir, conn) = open_test_db();
+        let cfg = load_config(&conn);
+        if cfg.dbs.is_empty() {
+            eprintln!(
+                "[hermes-e2e] skip: {} 下没有 state.db",
+                cfg.home
+                    .as_ref()
+                    .map(|h| h.display().to_string())
+                    .unwrap_or_else(|| "(未定位到 home)".into())
+            );
             return;
         }
-        let (_dir, conn) = open_test_db();
-        let n = scan_once(&conn, &dbs).unwrap();
+        eprintln!(
+            "[hermes-e2e] home={} 库={}",
+            cfg.home.as_ref().unwrap().display(),
+            cfg.dbs.len()
+        );
+        let n = scan_once(&conn, &cfg.dbs).unwrap();
         let (calls, p, c, ca, cost): (i64, i64, i64, i64, f64) = conn
             .query_row(
                 "SELECT COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0),
@@ -1046,8 +1254,8 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .unwrap();
-        eprintln!("[hermes-e2e] 库={} 首次扫描新增={n}", dbs.len());
+        eprintln!("[hermes-e2e] 首次扫描新增={n}");
         eprintln!("[hermes-e2e] 记录={calls} 输入={p} 输出={c} 缓存={ca} 费用=${cost:.4}");
-        assert_eq!(scan_once(&conn, &dbs).unwrap(), 0, "第二轮不应新增");
+        assert_eq!(scan_once(&conn, &cfg.dbs).unwrap(), 0, "第二轮不应新增");
     }
 }

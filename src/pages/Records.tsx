@@ -39,6 +39,7 @@ export default function Records() {
     display_currency: 'CNY',
     usd_cny_rate: 7.1,
     collector_upstream: 'https://api.deepseek.com',
+    hermes_home: '',
   })
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)

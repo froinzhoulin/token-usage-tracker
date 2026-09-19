@@ -11,6 +11,9 @@ pub struct SettingsView {
     pub usd_cny_rate: f64,
     /// 透明代理上游地址(如 https://api.deepseek.com)
     pub collector_upstream: String,
+    /// Hermes Agent 数据目录(留空 = 自动探测; 免安装版需手动指定)
+    #[serde(default)]
+    pub hermes_home: String,
 }
 
 #[tauri::command]
@@ -30,6 +33,10 @@ pub fn get_settings(db: State<'_, Db>) -> Result<SettingsView, String> {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(7.1),
             collector_upstream: upstream,
+            hermes_home: read_setting(&conn, "hermes_home")
+                .ok()
+                .flatten()
+                .unwrap_or_default(),
         })
         .map_err(|e| e.to_string())
 }
@@ -46,6 +53,8 @@ pub fn set_settings(db: State<'_, Db>, s: SettingsView) -> Result<(), String> {
     } else {
         write_setting(&conn, "collector_upstream", &upstream).map_err(|e| e.to_string())?;
     }
+    // 空字符串 = 恢复自动探测
+    write_setting(&conn, "hermes_home", s.hermes_home.trim()).map_err(|e| e.to_string())?;
     Ok(())
 }
 

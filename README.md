@@ -78,6 +78,7 @@ LLM 用量分散在多次会话、多个客户端里，说不清**花了多少�
 - macOS / Linux：`~/.hermes/state.db`
 - 命名 profile 各有一份：`<hermes home>/profiles/<name>/state.db`（会一并扫描）
 - 可用 `HERMES_HOME` 环境变量覆盖 home
+- **免安装（portable）版**：数据放在安装目录（`<免安装根目录>\data\hermes-home\state.db`），既没有注册表项也没有快捷方式线索，无法自动探测 —— 请在**设置页 → Hermes Agent 数据目录**填入路径（填根目录、`…\data\hermes-home` 或 `state.db` 文件路径都行），保存后约 3 秒生效、无需重启
 
 要点：
 
@@ -138,10 +139,11 @@ npm run tauri build    # 产出安装包
 
 ```bash
 cd src-tauri
-cargo test --lib                                                        # 54 项单元测试
+cargo test --lib                                                        # 58 项单元测试
 cargo test --lib scan_real_codex_home -- --ignored --nocapture           # 用真实 ~/.codex 数据端到端核对(临时库, 不碰应用库)
 cargo test --lib scan_real_workbuddy_home -- --ignored --nocapture       # 同上, 针对 ~/.workbuddy
 cargo test --lib scan_real_hermes_home -- --ignored --nocapture          # 同上, 针对 Hermes state.db(主库 + profiles)
+# 自定义目录: $env:HERMES_HOME="D:\...\data\hermes-home"; cargo test --lib scan_real_hermes_home -- --ignored --nocapture
 cargo test --test integration                                           # 导入-统计-导出全链路
 cargo test --release --test integration perf_100k -- --ignored --nocapture   # 10 万行性能验收
 ```
@@ -184,6 +186,7 @@ token-usage-tracker/
 - WorkBuddy 的 jsonl 格式若随版本变化，解析逻辑需同步更新；其行内不含厂商字段，故 WorkBuddy 记录的厂商留空（需在设置页按模型名自定义单价才能估算费用）
 - Hermes Agent 的 `state.db` schema 若随版本变化，解析逻辑需同步更新；本工具按其当前 schema（`session_model_usage` 优先、`sessions` 兜底）读取，schema 漂移时会退化为更粗的会话总量而不是丢数据
 - Hermes 只提供累计计数，没有逐次调用明细，所以一条记录代表"两次扫描之间的增量"，`上报次数`不等于真实 API 调用次数（Hermes 的 `api_call_count` 未入库）
+- 免安装（portable）版 Hermes 无法自动探测（无注册表/快捷方式线索），需在设置页指定数据目录；已在本机实测 `Hermes Agent CN Desktop Portable` 的 `data\hermes-home\state.db` 可正常读取
 - 应用未运行期间的多次调用，只能补记每会话最后一次（快照仅含最近一次调用的用量）
 - CSV 导入界面暂未开放（后端解析已实现并测试覆盖，计划在后续版本回归）
 
@@ -192,6 +195,7 @@ token-usage-tracker/
 ### v0.4.0
 
 - ☤ 新增 **Hermes Agent 自动检测**通道：只读读取 `state.db`（Windows `%LOCALAPPDATA%\hermes\state.db`，含 `profiles/*`，可用 `HERMES_HOME` 覆盖），按 `(会话, 模型, 厂商)` 的累计计数取增量入库，重启不重复计数
+- ✨ **设置页新增「Hermes Agent 数据目录」**：免安装（portable）版没有注册表/快捷方式线索无法自动探测，填一次路径即可（根目录 / `data\hermes-home` / `state.db` 三种写法都接受），保存后约 3 秒生效、无需重启；已在本机 `Hermes Agent CN Desktop Portable`（schema v22）上实测通过
 - ✨ 引入通用 **`source_cursor` 水位线表**（数据迁移 v4）：为累计型数据源保存"上次已入库的累计值"，应用未运行期间的用量下次扫描自动补齐
 - ✨ 来源标签筛选扩展到 **7 个来源**（DSH / Claude Code / Codex / WorkBuddy / Hermes Agent / 本地代理 / HTTP 上报）
 - ✨ 看板「自动检测通道」面板新增 Hermes Agent 状态与库路径
